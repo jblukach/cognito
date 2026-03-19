@@ -1,0 +1,25 @@
+import os
+
+def handler(event, context):
+
+    clientid = os.environ['CLIENT_ID']
+
+    html = '''<HTML>
+    <HEAD>
+        <TITLE>Gone Fishing!</TITLE>
+    </HEAD>
+    <BODY>
+        <CENTER>
+            <IMAGE SRC="https://cdn.lukach.io/lunker.png" ALT="Lunker Logo">
+            <H2><A HREF="https://hello.lukach.io/login?client_id='''+clientid+'''&response_type=code&scope=openid&redirect_uri=https://api.lukach.io/auth" style="text-decoration:none">Gone Fishing @ USW2!</A></H2>
+        </CENTER>
+    </BODY>
+    </HTML>'''
+
+    return {
+        'statusCode': 200,
+        'body': html,
+        'headers': {
+            'Content-Type': 'text/html'
+        }
+    }
