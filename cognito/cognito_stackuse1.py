@@ -290,6 +290,7 @@ class CognitoStackUse1(Stack):
 
         auth = _lambda.Function(
             self, 'auth',
+            function_name = 'auth',
             runtime = _lambda.Runtime.PYTHON_3_13,
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('auth'),
@@ -319,6 +320,7 @@ class CognitoStackUse1(Stack):
 
         root = _lambda.Function(
             self, 'root',
+            function_name = 'root',
             runtime = _lambda.Runtime.PYTHON_3_13,
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('root'),
