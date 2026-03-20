@@ -12,7 +12,7 @@ def handler(event, context):
     <BODY>
         <CENTER>
             <IMAGE SRC="https://cdn.lukach.io/nofishing.png" ALT="No Fishing Logo">
-            <H2>No Fishing!</H2>
+            <H2>No Fishing @ USE1!</H2>
         </CENTER>
     </BODY>
     </HTML>'''
@@ -49,7 +49,7 @@ def handler(event, context):
                 <BODY>
                     <CENTER>
                         <IMAGE SRC="https://cdn.lukach.io/lunker.png" ALT="Lunker Logo">
-                        <H2>Happy Fishing!</H2>
+                        <H2>Happy Fishing @ USE1!</H2>
                     </CENTER>
                 </BODY>
                 </HTML>'''
