@@ -11,6 +11,7 @@ from aws_cdk import (
     aws_lambda as _lambda,
     aws_logs as _logs,
     aws_route53 as _route53,
+    aws_route53_targets as _r53targets,
     aws_s3 as _s3,
     aws_ssm as _ssm
 )
@@ -57,10 +58,10 @@ class CognitoStackUsw2(Stack):
 
     ### HOSTZONE ###
 
-        #hostzone = _route53.HostedZone.from_lookup(
-        #    self, 'hostzone',
-        #    domain_name = 'hello.lukach.io'
-        #)
+        hostzone = _route53.HostedZone.from_lookup(
+            self, 'hostzone',
+            domain_name = 'hello-usw2.lukach.io'
+        )
 
     ### PARAMETER ###
 
@@ -69,108 +70,116 @@ class CognitoStackUsw2(Stack):
             parameter_name = '/organization/id'
         )
 
-        #parameter = _ssm.StringParameter(
-        #    self, 'parameter',
-        #    description = 'hello.lukach.io',
-        #    parameter_name = '/route53/hellolukachio',
-        #    string_value = hostzone.hosted_zone_id,
-        #    tier = _ssm.ParameterTier.STANDARD
-        #)
-
     ### ACM CERTIFICATE ###
 
-        #acm = _acm.Certificate(
-        #    self, 'acm',
-        #    domain_name = 'hello.lukach.io',
-        #    subject_alternative_names = [
-        #        'usw2.hello.lukach.io'
-        #    ],
-        #    validation = _acm.CertificateValidation.from_dns(hostzone)
-        #)
+        acm = _acm.Certificate.from_certificate_arn(
+            self, 'acm',
+            'arn:aws:acm:us-east-1:'+account+':certificate/8cf8eca6-a4d2-4b92-a304-cd218f88df55'
+        )
 
     ### COGNITO USER POOL ###
 
-        #userpool = _cognito.UserPool(
-        #    self, 'userpool',
-        #    user_pool_name = 'lunker',
-        #    deletion_protection = True,
-        #    removal_policy = RemovalPolicy.RETAIN,
-        #    feature_plan = _cognito.FeaturePlan.PLUS,
-        #    standard_threat_protection_mode = _cognito.StandardThreatProtectionMode.AUDIT_ONLY,
-        #    custom_threat_protection_mode = _cognito.CustomThreatProtectionMode.AUDIT_ONLY,
-        #    self_sign_up_enabled = False,
-        #    sign_in_aliases = _cognito.SignInAliases(
-        #        email = True
-        #    ),
-        #    email = _cognito.UserPoolEmail.with_ses(
-        #        from_email = 'hello@lukach.io'
-        #    ),
-        #    sign_in_case_sensitive = False,
-        #    sign_in_policy = _cognito.SignInPolicy(
-        #        allowed_first_auth_factors = _cognito.AllowedFirstAuthFactors(
-        #            password = True,
-        #            email_otp = True,
-        #            passkey = True
-        #        )
-        #    ),
-        #    auto_verify = _cognito.AutoVerifiedAttrs(
-        #        email = False,
-        #        phone = False
-        #    ),
-        #    account_recovery = _cognito.AccountRecovery.NONE,
-        #    device_tracking = _cognito.DeviceTracking(
-        #        challenge_required_on_new_device = True,
-        #        device_only_remembered_on_user_prompt = False
-        #    ),
-        #    passkey_user_verification = _cognito.PasskeyUserVerification.PREFERRED,
-        #    mfa = _cognito.Mfa.OFF
-        #)
+        userpool = _cognito.UserPool(
+            self, 'userpool',
+            user_pool_name = 'lunker',
+            deletion_protection = True,
+            removal_policy = RemovalPolicy.RETAIN,
+            feature_plan = _cognito.FeaturePlan.PLUS,
+            standard_threat_protection_mode = _cognito.StandardThreatProtectionMode.AUDIT_ONLY,
+            custom_threat_protection_mode = _cognito.CustomThreatProtectionMode.AUDIT_ONLY,
+            self_sign_up_enabled = False,
+            sign_in_aliases = _cognito.SignInAliases(
+                email = True
+            ),
+            email = _cognito.UserPoolEmail.with_ses(
+                from_email = 'hello@lukach.io'
+            ),
+            sign_in_case_sensitive = False,
+            sign_in_policy = _cognito.SignInPolicy(
+                allowed_first_auth_factors = _cognito.AllowedFirstAuthFactors(
+                    password = True,
+                    email_otp = True,
+                    passkey = True
+                )
+            ),
+            auto_verify = _cognito.AutoVerifiedAttrs(
+                email = False,
+                phone = False
+            ),
+            account_recovery = _cognito.AccountRecovery.NONE,
+            device_tracking = _cognito.DeviceTracking(
+                challenge_required_on_new_device = True,
+                device_only_remembered_on_user_prompt = False
+            ),
+            passkey_user_verification = _cognito.PasskeyUserVerification.PREFERRED,
+            mfa = _cognito.Mfa.OFF
+        )
 
     ### COGNITO APP CLIENT ###
 
-        #appclient = userpool.add_client(
-        #    'appclient',
-        #    user_pool_client_name = 'lunker',
-        #    prevent_user_existence_errors = True,
-        #    auth_flows = _cognito.AuthFlow(
-        #        user = True,
-        #        user_srp = True
-        #    ),
-        #    o_auth = _cognito.OAuthSettings(
-        #        default_redirect_uri = 'https://api.lukach.io/auth',
-        #        callback_urls = [
-        #            'https://api.lukach.io/auth',
-        #            'https://usw2.api.lukach.io/auth'
-        #        ],
-        #        flows = _cognito.OAuthFlows(
-        #            authorization_code_grant = True
-        #        ),
-        #        scopes = [
-        #            _cognito.OAuthScope.OPENID
-        #        ]
-        #    ),
-        #    generate_secret = True
-        #)
+        appclient = userpool.add_client(
+            'appclient',
+            user_pool_client_name = 'lunker',
+            prevent_user_existence_errors = True,
+            auth_flows = _cognito.AuthFlow(
+                user = True,
+                user_srp = True
+            ),
+            o_auth = _cognito.OAuthSettings(
+                default_redirect_uri = 'https://api.lukach.io/auth',
+                callback_urls = [
+                    'https://api.lukach.io/auth',
+                    'https://usw2.api.lukach.io/auth'
+                ],
+                flows = _cognito.OAuthFlows(
+                    authorization_code_grant = True
+                ),
+                scopes = [
+                    _cognito.OAuthScope.OPENID
+                ]
+            ),
+            generate_secret = True
+        )
 
     #### COGNITO BRANDING ###
 
-        #branding = _cognito.CfnManagedLoginBranding(
-        #    self, 'branding',
-        #    user_pool_id = userpool.user_pool_id,
-        #    client_id = appclient.user_pool_client_id,
-        #    use_cognito_provided_values = True,
-        #)
+        branding = _cognito.CfnManagedLoginBranding(
+            self, 'branding',
+            user_pool_id = userpool.user_pool_id,
+            client_id = appclient.user_pool_client_id,
+            use_cognito_provided_values = True,
+        )
 
     ### COGNITO DOMAIN ###
 
-        #domain = userpool.add_domain(
-        #    'domain',
-        #    custom_domain = _cognito.CustomDomainOptions(
-        #        domain_name = 'hello.lukach.io',
-        #        certificate = acm
-        #    ),
-        #    managed_login_version = _cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN
-        #)
+        domain = userpool.add_domain(
+            'domain',
+            custom_domain = _cognito.CustomDomainOptions(
+                domain_name = 'hello-usw2.lukach.io',
+                certificate = acm
+            ),
+            managed_login_version = _cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN
+        )
+
+    ### COGNITO DNS ###
+
+        cognitofour = _route53.ARecord(
+            self, 'cognitofour',
+            zone = hostzone,
+            record_name = 'hello-usw2.lukach.io',
+            target = _route53.RecordTarget.from_alias(
+                _r53targets.UserPoolDomainTarget(domain)
+            )
+        )
+
+        cognitofsix = _route53.AaaaRecord(
+            self, 'cognitofsix',
+            zone = hostzone,
+            record_name = 'hello-usw2.lukach.io',
+            target = _route53.RecordTarget.from_alias(
+                _r53targets.UserPoolDomainTarget(domain)
+            )
+        )
 
     ### COGNITO LOGS ###
 
@@ -181,19 +190,19 @@ class CognitoStackUsw2(Stack):
             removal_policy = RemovalPolicy.DESTROY
         )
 
-        #authenticationlogsdelivery = _cognito.CfnLogDeliveryConfiguration(
-        #    self, 'authenticationlogsdelivery',
-        #    user_pool_id = userpool.user_pool_id,
-        #    log_configurations = [
-        #        _cognito.CfnLogDeliveryConfiguration.LogConfigurationProperty(
-        #            cloud_watch_logs_configuration = _cognito.CfnLogDeliveryConfiguration.CloudWatchLogsConfigurationProperty(
-        #                log_group_arn = 'arn:aws:logs:'+region+':'+account+':log-group:/aws/cognito/lunker/authentication'
-        #            ),
-        #            event_source = 'userAuthEvents',
-        #            log_level = 'INFO'
-        #        )
-        #    ]
-        #)
+        authenticationlogsdelivery = _cognito.CfnLogDeliveryConfiguration(
+            self, 'authenticationlogsdelivery',
+            user_pool_id = userpool.user_pool_id,
+            log_configurations = [
+                _cognito.CfnLogDeliveryConfiguration.LogConfigurationProperty(
+                    cloud_watch_logs_configuration = _cognito.CfnLogDeliveryConfiguration.CloudWatchLogsConfigurationProperty(
+                        log_group_arn = 'arn:aws:logs:'+region+':'+account+':log-group:/aws/cognito/lunker/authentication'
+                    ),
+                    event_source = 'userAuthEvents',
+                    log_level = 'INFO'
+                )
+            ]
+        )
 
     ### IAM ROLE ###
 
@@ -233,11 +242,11 @@ class CognitoStackUsw2(Stack):
             runtime = _lambda.Runtime.PYTHON_3_13,
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('auth'),
-            handler = 'auth.handler',
-            #environment = dict(
-            #    CLIENT_ID = appclient.user_pool_client_id,
-            #    CLIENT_SECRET = SecretValue.unsafe_unwrap(appclient.user_pool_client_secret)
-            #),
+            handler = 'authusw2.handler',
+            environment = dict(
+                CLIENT_ID = appclient.user_pool_client_id,
+                CLIENT_SECRET = SecretValue.unsafe_unwrap(appclient.user_pool_client_secret)
+            ),
             timeout = Duration.seconds(7),
             memory_size = 128,
             role = role,
@@ -263,9 +272,9 @@ class CognitoStackUsw2(Stack):
             architecture = _lambda.Architecture.ARM_64,
             code = _lambda.Code.from_asset('root'),
             handler = 'rootusw2.handler',
-            #environment = dict(
-            #    CLIENT_ID = appclient.user_pool_client_id
-            #),
+            environment = dict(
+                CLIENT_ID = appclient.user_pool_client_id
+            ),
             timeout = Duration.seconds(7),
             memory_size = 128,
             role = role

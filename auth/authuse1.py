@@ -22,7 +22,7 @@ def handler(event, context):
             code = 400
         else:
             b64 = base64.b64encode(f"{os.environ['CLIENT_ID']}:{os.environ['CLIENT_SECRET']}".encode()).decode()
-            url = 'https://hello.lukach.io/oauth2/token'
+            url = 'https://hello-use1.lukach.io/oauth2/token'
             headers = {
                'Authorization': f'Basic {b64}',
                 'Content-Type': 'application/x-www-form-urlencoded'
