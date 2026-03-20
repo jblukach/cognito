@@ -11,7 +11,7 @@ def handler(event, context):
     <BODY>
         <CENTER>
             <IMAGE SRC="https://cdn.lukach.io/lunker.png" ALT="Lunker Logo">
-            <H2><A HREF="https://hello-usw2.lukach.io/login?client_id='''+clientid+'''&response_type=code&scope=openid&redirect_uri=https://api.lukach.io/auth" style="text-decoration:none">Gone Fishing @ USW2!</A></H2>
+            <H2><A HREF="https://hello-usw2.lukach.io/login?client_id='''+clientid+'''&response_type=code&scope=openid&redirect_uri=https://usw2.api.lukach.io/auth" style="text-decoration:none">Gone Fishing @ USW2!</A></H2>
         </CENTER>
     </BODY>
     </HTML>'''
