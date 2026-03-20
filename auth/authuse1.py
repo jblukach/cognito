@@ -30,7 +30,7 @@ def handler(event, context):
             data = {
                 'code': event['rawQueryString'].split('=')[1],
                 'grant_type': 'authorization_code',
-                'redirect_uri': 'https://api.lukach.io/auth'
+                'redirect_uri': 'https://use1.api.lukach.io/auth'
             }
             response = requests.post(url, headers=headers, data=data)
             if response.status_code == 200 and 'id_token' in response.json():
@@ -41,7 +41,7 @@ def handler(event, context):
                     <TITLE>Happy Fishing!</TITLE>
                     <SCRIPT>
                         const headers = { 'Authorization': 'Bearer ''' + tokens['access_token'] + '''' };
-                        fetch('https://api.lukach.io/home', { headers: headers })
+                        fetch('https://use1.api.lukach.io/home', { headers: headers })
                             .then(response => response.text())
                             .then(data => { document.write(data); });
                     </SCRIPT>
