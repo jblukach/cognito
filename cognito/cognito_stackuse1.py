@@ -177,9 +177,8 @@ class CognitoStackUse1(Stack):
                 user_srp = True
             ),
             o_auth = _cognito.OAuthSettings(
-                default_redirect_uri = 'https://api.lukach.io/auth',
+                default_redirect_uri = 'https://use1.api.lukach.io/auth',
                 callback_urls = [
-                    'https://api.lukach.io/auth',
                     'https://use1.api.lukach.io/auth'
                 ],
                 flows = _cognito.OAuthFlows(
