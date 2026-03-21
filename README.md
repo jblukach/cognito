@@ -12,7 +12,7 @@ Each region hosts its own login flow that ultimately generates a
 
 ------------------------------------------------------------------------
 
-## Login Flow
+# Login Flow
 
 **User**\
 ↓\
