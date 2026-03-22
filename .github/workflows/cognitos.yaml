@@ -1,4 +1,4 @@
-name: cognito
+name: cognitos
 on:
   push:
     branches:
@@ -8,7 +8,7 @@ on:
 jobs:
   deploy:
     runs-on:
-      - codebuild-cognito-${{ github.run_id }}-${{ github.run_attempt }}
+      - codebuild-cognitos-${{ github.run_id }}-${{ github.run_attempt }}
     permissions:
       id-token: write
       contents: read
