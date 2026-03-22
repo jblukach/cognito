@@ -197,7 +197,7 @@ class CognitoStackUse1(Stack):
             self, 'branding',
             user_pool_id = userpool.user_pool_id,
             client_id = appclient.user_pool_client_id,
-            use_cognito_provided_values = True,
+            use_cognito_provided_values = True
         )
 
     ### COGNITO DOMAIN ###
