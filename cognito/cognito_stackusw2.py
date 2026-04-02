@@ -142,11 +142,175 @@ class CognitoStackUsw2(Stack):
 
     #### COGNITO BRANDING ###
 
+        branding_settings = {
+            'categories': {
+                'auth': {
+                    'authMethodOrder': [[
+                        {
+                            'display': 'INPUT',
+                            'type': 'USERNAME_PASSWORD'
+                        }
+                    ]]
+                },
+                'form': {
+                    'displayGraphics': False,
+                    'instructions': {
+                        'enabled': False
+                    },
+                    'languageSelector': {
+                        'enabled': False
+                    },
+                    'location': {
+                        'horizontal': 'CENTER',
+                        'vertical': 'CENTER'
+                    },
+                    'sessionTimerDisplay': 'NONE'
+                },
+                'global': {
+                    'colorSchemeMode': 'LIGHT',
+                    'pageFooter': {
+                        'enabled': False
+                    },
+                    'pageHeader': {
+                        'enabled': False
+                    },
+                    'spacingDensity': 'REGULAR'
+                },
+                'signUp': {
+                    'acceptanceElements': [
+                        {
+                            'enforcement': 'NONE',
+                            'textKey': 'en'
+                        }
+                    ]
+                }
+            },
+            'componentClasses': {
+                'buttons': {
+                    'borderRadius': 999.0
+                },
+                'focusState': {
+                    'lightMode': {
+                        'borderColor': '0e7490ff'
+                    }
+                },
+                'input': {
+                    'borderRadius': 16.0,
+                    'lightMode': {
+                        'defaults': {
+                            'backgroundColor': 'ffffffff',
+                            'borderColor': 'cbd5e1ff'
+                        },
+                        'placeholderColor': '486581ff'
+                    }
+                },
+                'inputDescription': {
+                    'lightMode': {
+                        'textColor': '486581ff'
+                    }
+                },
+                'inputLabel': {
+                    'lightMode': {
+                        'textColor': '10233cff'
+                    }
+                },
+                'link': {
+                    'lightMode': {
+                        'defaults': {
+                            'textColor': '0e7490ff'
+                        },
+                        'hover': {
+                            'textColor': '155e75ff'
+                        }
+                    }
+                }
+            },
+            'components': {
+                'alert': {
+                    'borderRadius': 12.0,
+                    'lightMode': {
+                        'error': {
+                            'backgroundColor': 'fff7f7ff',
+                            'borderColor': 'd91515ff'
+                        }
+                    }
+                },
+                'form': {
+                    'backgroundImage': {
+                        'enabled': False
+                    },
+                    'borderRadius': 16.0,
+                    'lightMode': {
+                        'backgroundColor': 'ffffffff',
+                        'borderColor': 'dbe4eeff'
+                    },
+                    'logo': {
+                        'enabled': False,
+                        'formInclusion': 'IN',
+                        'location': 'CENTER',
+                        'position': 'TOP'
+                    }
+                },
+                'pageBackground': {
+                    'image': {
+                        'enabled': False
+                    },
+                    'lightMode': {
+                        'color': 'f4f7fbff'
+                    }
+                },
+                'pageText': {
+                    'lightMode': {
+                        'bodyColor': '486581ff',
+                        'descriptionColor': '486581ff',
+                        'headingColor': '10233cff'
+                    }
+                },
+                'primaryButton': {
+                    'lightMode': {
+                        'active': {
+                            'backgroundColor': '155e75ff',
+                            'textColor': 'ffffffff'
+                        },
+                        'defaults': {
+                            'backgroundColor': '0e7490ff',
+                            'textColor': 'ffffffff'
+                        },
+                        'hover': {
+                            'backgroundColor': '155e75ff',
+                            'textColor': 'ffffffff'
+                        }
+                    }
+                },
+                'secondaryButton': {
+                    'lightMode': {
+                        'active': {
+                            'backgroundColor': 'e6f4f8ff',
+                            'borderColor': '155e75ff',
+                            'textColor': '155e75ff'
+                        },
+                        'defaults': {
+                            'backgroundColor': 'ffffffff',
+                            'borderColor': '0e7490ff',
+                            'textColor': '0e7490ff'
+                        },
+                        'hover': {
+                            'backgroundColor': 'f2fbfdff',
+                            'borderColor': '155e75ff',
+                            'textColor': '155e75ff'
+                        }
+                    }
+                }
+            }
+        }
+
         branding = _cognito.CfnManagedLoginBranding(
             self, 'branding',
             user_pool_id = userpool.user_pool_id,
             client_id = appclient.user_pool_client_id,
-            use_cognito_provided_values = True
+            return_merged_resources = False,
+            settings = branding_settings,
+            use_cognito_provided_values = False
         )
 
     ### COGNITO DOMAIN ###
