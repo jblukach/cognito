@@ -81,19 +81,39 @@ def handler(_event, _context):
             background: #ffffff;
             box-shadow: 0 18px 36px rgba(16, 35, 60, 0.2);
             text-align: left;
+            max-height: 80vh;
+            overflow-y: auto;
         }}
 
         .help-modal h2 {{
-            margin: 0 0 8px;
+            margin: 0 0 12px;
             font-size: 1rem;
         }}
 
-        .help-modal ul {{
+        .help-steps {{
             margin: 0;
-            padding-left: 18px;
+            padding-left: 20px;
             color: #486581;
-            line-height: 1.4;
             font-size: 0.92rem;
+        }}
+
+        .help-steps li {{
+            margin-bottom: 12px;
+        }}
+
+        .help-steps span {{
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 600;
+            color: #10233c;
+        }}
+
+        .help-steps img {{
+            display: block;
+            max-width: 100%;
+            border-radius: 8px;
+            border: 1px solid #dbe4ee;
+            margin: 0;
         }}
 
         .help-close {{
@@ -140,13 +160,42 @@ def handler(_event, _context):
 <body>
     <section id="lunker-help" class="help-modal-overlay" aria-hidden="true" aria-live="polite">
         <div class="help-modal" role="dialog" aria-modal="true" aria-label="Lunker Help">
-            <h2>Lunker Help</h2>
-            <ul>
-                <li>Click Log In to sign in with Cognito.</li>
-                <li>After login, you will be redirected back automatically.</li>
-                <li>If login fails, use Back and try again.</li>
-            </ul>
-            <button class="help-close" type="button" onclick="closeHelp()">Close</button>
+            <h2>Lunker Help - Invite Only</h2>
+            <ol class="help-steps">
+                <li>
+                    <span>Click Login</span>
+                    Click the <b>Log In</b> button on this page to begin the sign-in process.
+                    <img src="https://cdn.lukach.io/help/root.png" alt="Click Login">
+                </li>
+                <li>
+                    <span>Enter Email Address</span>
+                    Type the email address associated with your invite and click <b>Continue</b>.
+                    <img src="https://cdn.lukach.io/help/signin.png" alt="Enter Email Address">
+                </li>
+                <li>
+                    <span>Enter the Code Sent to Your Email</span>
+                    Check your inbox for a one-time code. Enter it to sign in — no password required.
+                    <img src="https://cdn.lukach.io/help/passwordless.png" alt="Enter One-Time Code">
+                </li>
+                <li>
+                    <span>Successful Login Redirects Automatically</span>
+                    After a valid code is accepted, you will be redirected back to the app automatically.
+                    <img src="https://cdn.lukach.io/help/login-success.png" alt="Successful Login">
+                </li>
+                <li>
+                    <span>Failed Login Returns to Sign-In</span>
+                    If the code is invalid or expired, you will be returned to the sign-in page to try again.
+                    <img src="https://cdn.lukach.io/help/login-failure.png" alt="Failed Login">
+                </li>
+                <li>
+                    <span>First Login View</span>
+                    On your first successful login you will see the regional fishing grounds landing page.
+                    <img src="https://cdn.lukach.io/help/first-login.png" alt="First Login View">
+                </li>
+            </ol>
+              <div style="text-align:center">
+                 <button class="help-close" type="button" onclick="closeHelp()">Close</button>
+              </div>
         </div>
     </section>
     <main>
