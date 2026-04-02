@@ -109,9 +109,9 @@ class CognitoStackUse1(Stack):
 
     ### PARAMETER ###
 
-        organization = _ssm.StringParameter.from_string_parameter_attributes(
-            self, 'organization',
-            parameter_name = '/organization/id'
+        apigateway = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'apigateway',
+            parameter_name = '/account/api'
         )
 
     ### ACM CERTIFICATE ###
@@ -281,7 +281,7 @@ class CognitoStackUse1(Stack):
         )
 
         composite = _iam.CompositePrincipal(
-            _iam.OrganizationPrincipal(organization.string_value),
+            _iam.AccountPrincipal(apigateway.string_value),
             _iam.ServicePrincipal('apigateway.amazonaws.com')
         )
 
