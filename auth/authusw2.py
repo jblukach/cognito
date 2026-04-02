@@ -5,6 +5,11 @@ import requests
 def handler(event, context):
 
     code = 401
+    login_url = (
+        'https://hello-usw2.lukach.io/login?client_id='
+        + os.environ['CLIENT_ID']
+        + '&response_type=code&scope=openid&redirect_uri=https://usw2.api.lukach.io/auth'
+    )
     html = '''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -132,7 +137,7 @@ def handler(event, context):
         <div class="help-modal" role="dialog" aria-modal="true" aria-label="Lunker Help">
             <h2>Lunker Help</h2>
             <ul>
-                <li>Use Back to return to the main login page.</li>
+                <li>Use Log In to return to the main login page.</li>
                 <li>Complete Cognito sign in, then return here automatically.</li>
                 <li>If this keeps happening, retry login and verify your callback URL.</li>
             </ul>
@@ -142,7 +147,7 @@ def handler(event, context):
     <main>
         <button class="help-button" type="button" title="Lunker Help" onclick="toggleHelp()">?</button>
         <img src="https://cdn.lukach.io/nofishing.png" alt="No Fishing Logo">
-        <a href="https://api.lukach.io">Back</a>
+        <a href="{login_url}">Log In</a>
     </main>
     <script>
         function toggleHelp() {
@@ -165,7 +170,7 @@ def handler(event, context):
         });
     </script>
 </body>
-</html>'''
+</html>'''.replace('{login_url}', login_url)
 
     if 'rawQueryString' in event and event['rawQueryString'].startswith('code='):
         if not all(c.isalnum() or c in ['=','-'] for c in event['rawQueryString']):
