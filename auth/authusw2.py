@@ -3,8 +3,12 @@ import boto3
 import json
 import os
 import requests
+from urllib.parse import parse_qs, urlencode
 
 _secrets = boto3.client('secretsmanager')
+
+COGNITO_DOMAIN = 'https://hello-usw2.lukach.io'
+REDIRECT_URI = 'https://usw2.api.lukach.io/auth'
 
 
 def _get_credentials() -> tuple[str, str]:
@@ -16,12 +20,37 @@ def _get_credentials() -> tuple[str, str]:
 def handler(event, context):
 
     client_id, client_secret = _get_credentials()
+    query = parse_qs(event.get('rawQueryString', ''), keep_blank_values=False)
+
+    # Redirect through Cognito hosted UI logout to clear Cognito session cookies.
+    if query.get('action', [''])[0] == 'logout':
+        logout_url = (
+            COGNITO_DOMAIN
+            + '/logout?'
+            + urlencode({
+                'client_id': client_id,
+                'logout_uri': REDIRECT_URI
+            })
+        )
+        return {
+            'statusCode': 302,
+            'body': '',
+            'headers': {
+                'Location': logout_url,
+                'Cache-Control': 'no-store',
+                'Pragma': 'no-cache'
+            }
+        }
 
     code = 401
     login_url = (
-        'https://hello-usw2.lukach.io/login?client_id='
-        + client_id
-        + '&response_type=code&scope=openid&redirect_uri=https://usw2.api.lukach.io/auth'
+        COGNITO_DOMAIN + '/login?'
+        + urlencode({
+            'client_id': client_id,
+            'response_type': 'code',
+            'scope': 'openid',
+            'redirect_uri': REDIRECT_URI
+        })
     )
     html = '''<!DOCTYPE html>
 <html lang="en">
@@ -234,20 +263,21 @@ def handler(event, context):
 </body>
 </html>'''.replace('{login_url}', login_url)
 
-    if 'rawQueryString' in event and event['rawQueryString'].startswith('code='):
-        if not all(c.isalnum() or c in ['=','-'] for c in event['rawQueryString']):
+    auth_code = query.get('code', [None])[0]
+    if auth_code:
+        if not all(c.isalnum() or c in ['_', '-', '.'] for c in auth_code):
             code = 400
         else:
             b64 = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-            url = 'https://hello-usw2.lukach.io/oauth2/token'
+            url = COGNITO_DOMAIN + '/oauth2/token'
             headers = {
                'Authorization': f'Basic {b64}',
                 'Content-Type': 'application/x-www-form-urlencoded'
             }
             data = {
-                'code': event['rawQueryString'].split('=')[1],
+                'code': auth_code,
                 'grant_type': 'authorization_code',
-                'redirect_uri': 'https://usw2.api.lukach.io/auth'
+                'redirect_uri': REDIRECT_URI
             }
             response = requests.post(url, headers=headers, data=data, timeout=5)
             if response.status_code == 200 and 'id_token' in response.json():

@@ -1,23 +1,20 @@
-import boto3
-import json
 import os
+from urllib.parse import urlencode
 
-_secrets = boto3.client('secretsmanager')
-
-
-def _get_client_id() -> str:
-    secret_arn = os.environ['CLIENTID_SECRET_ARN']
-    response = _secrets.get_secret_value(SecretId=secret_arn)
-    payload = json.loads(response['SecretString'])
-    return payload['CLIENT_ID']
+COGNITO_DOMAIN = 'https://hello-usw2.lukach.io'
+REDIRECT_URI = 'https://usw2.api.lukach.io/auth'
 
 def handler(_event, _context):
 
-    clientid = _get_client_id()
+    clientid = os.environ['CLIENT_ID']
     login_url = (
-        'https://hello-usw2.lukach.io/login?client_id='
-        + clientid
-        + '&response_type=code&scope=openid&redirect_uri=https://usw2.api.lukach.io/auth'
+        COGNITO_DOMAIN + '/login?'
+        + urlencode({
+            'client_id': clientid,
+            'response_type': 'code',
+            'scope': 'openid',
+            'redirect_uri': REDIRECT_URI
+        })
     )
 
     html = f'''<!DOCTYPE html>
