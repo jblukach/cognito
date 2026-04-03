@@ -1,13 +1,26 @@
 import base64
+import boto3
+import json
 import os
 import requests
 
+_secrets = boto3.client('secretsmanager')
+
+
+def _get_credentials() -> tuple[str, str]:
+    secret_arn = os.environ['CREDENTIALS_SECRET_ARN']
+    response = _secrets.get_secret_value(SecretId=secret_arn)
+    payload = json.loads(response['SecretString'])
+    return payload['CLIENT_ID'], payload['CLIENT_SECRET']
+
 def handler(event, context):
+
+    client_id, client_secret = _get_credentials()
 
     code = 401
     login_url = (
         'https://hello-use1.lukach.io/login?client_id='
-        + os.environ['CLIENT_ID']
+        + client_id
         + '&response_type=code&scope=openid&redirect_uri=https://use1.api.lukach.io/auth'
     )
     html = '''<!DOCTYPE html>
@@ -225,7 +238,7 @@ def handler(event, context):
         if not all(c.isalnum() or c in ['=','-'] for c in event['rawQueryString']):
             code = 400
         else:
-            b64 = base64.b64encode(f"{os.environ['CLIENT_ID']}:{os.environ['CLIENT_SECRET']}".encode()).decode()
+            b64 = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
             url = 'https://hello-use1.lukach.io/oauth2/token'
             headers = {
                'Authorization': f'Basic {b64}',

@@ -8,11 +8,13 @@ from aws_cdk import (
     aws_certificatemanager as _acm,
     aws_cognito as _cognito,
     aws_iam as _iam,
+    aws_kms as _kms,
     aws_lambda as _lambda,
     aws_logs as _logs,
     aws_route53 as _route53,
     aws_route53_targets as _r53targets,
     aws_s3 as _s3,
+    aws_secretsmanager as _secrets,
     aws_ssm as _ssm
 )
 
@@ -68,6 +70,11 @@ class CognitoStackUsw2(Stack):
         apigateway = _ssm.StringParameter.from_string_parameter_attributes(
             self, 'apigateway',
             parameter_name = '/account/api'
+        )
+
+        lunkeracct = _ssm.StringParameter.from_string_parameter_attributes(
+            self, 'lunkeracct',
+            parameter_name = '/account/lunker'
         )
 
     ### ACM CERTIFICATE ###
@@ -369,6 +376,64 @@ class CognitoStackUsw2(Stack):
             ]
         )
 
+    ### SECRETS MANAGER ###
+
+        clientidkms = _kms.Key(
+            self, 'clientidkms',
+            alias = 'alias/lunker-clientid-usw2',
+            description = 'KMS key for Cognito clientid secret sharing',
+            enable_key_rotation = True,
+            removal_policy = RemovalPolicy.DESTROY
+        )
+
+        clientidkms.add_to_resource_policy(
+            _iam.PolicyStatement(
+                principals = [
+                    _iam.AccountPrincipal(lunkeracct.string_value)
+                ],
+                actions = [
+                    'kms:Decrypt',
+                    'kms:DescribeKey'
+                ],
+                resources = [
+                    '*'
+                ]
+            )
+        )
+
+        clientid = _secrets.Secret(
+            self, 'clientid',
+            secret_name = 'clientid',
+            encryption_key = clientidkms,
+            secret_object_value = {
+                'CLIENT_ID': SecretValue.unsafe_plain_text(appclient.user_pool_client_id)
+            }
+        )
+
+        clientid.add_to_resource_policy(
+            _iam.PolicyStatement(
+                principals = [
+                    _iam.AccountPrincipal(lunkeracct.string_value)
+                ],
+                actions = [
+                    'secretsmanager:DescribeSecret',
+                    'secretsmanager:GetSecretValue'
+                ],
+                resources = [
+                    clientid.secret_arn
+                ]
+            )
+        )
+
+        credentials = _secrets.Secret(
+            self, 'credentials',
+            secret_name = 'credentials',
+            secret_object_value = {
+                'CLIENT_ID': SecretValue.unsafe_plain_text(appclient.user_pool_client_id),
+                'CLIENT_SECRET': appclient.user_pool_client_secret
+            }
+        )
+
     ### IAM ROLE ###
 
         role = _iam.Role(
@@ -402,6 +467,8 @@ class CognitoStackUsw2(Stack):
 
     ### AUTH LAMBDA FUNCTION ###
 
+        credentials.grant_read(role)
+
         auth = _lambda.Function(
             self, 'auth',
             function_name = 'auth',
@@ -410,8 +477,7 @@ class CognitoStackUsw2(Stack):
             code = _lambda.Code.from_asset('auth'),
             handler = 'authusw2.handler',
             environment = dict(
-                CLIENT_ID = appclient.user_pool_client_id,
-                CLIENT_SECRET = SecretValue.unsafe_unwrap(appclient.user_pool_client_secret)
+                CREDENTIALS_SECRET_ARN = credentials.secret_arn
             ),
             timeout = Duration.seconds(7),
             memory_size = 128,
@@ -432,6 +498,8 @@ class CognitoStackUsw2(Stack):
 
     ### ROOT LAMBDA FUNCTION ###
 
+        clientid.grant_read(role)
+
         root = _lambda.Function(
             self, 'root',
             function_name = 'root',
@@ -440,7 +508,7 @@ class CognitoStackUsw2(Stack):
             code = _lambda.Code.from_asset('root'),
             handler = 'rootusw2.handler',
             environment = dict(
-                CLIENT_ID = appclient.user_pool_client_id
+                CLIENTID_SECRET_ARN = clientid.secret_arn
             ),
             timeout = Duration.seconds(7),
             memory_size = 128,

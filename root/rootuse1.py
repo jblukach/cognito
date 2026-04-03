@@ -1,8 +1,19 @@
+import boto3
+import json
 import os
+
+_secrets = boto3.client('secretsmanager')
+
+
+def _get_client_id() -> str:
+    secret_arn = os.environ['CLIENTID_SECRET_ARN']
+    response = _secrets.get_secret_value(SecretId=secret_arn)
+    payload = json.loads(response['SecretString'])
+    return payload['CLIENT_ID']
 
 def handler(_event, _context):
 
-    clientid = os.environ['CLIENT_ID']
+    clientid = _get_client_id()
     login_url = (
         'https://hello-use1.lukach.io/login?client_id='
         + clientid

@@ -18,6 +18,8 @@ This project provides a **highly available**, **geo-distributed** authentication
 - 🔐 **Secure Authentication** - Cognito-managed identity and access control
 - 🚀 **API Gateway Integration** - Lambda Authorizer for token validation
 - 🔑 **Bearer Token Support** - Standards-compliant JWT token handling
+- 🔒 **Runtime Secret Retrieval** - Auth and root Lambdas read secrets from Secrets Manager at invocation time
+- 🗝️ **KMS-Backed Secret Sharing** - `clientid` is encrypted with customer-managed KMS keys and shared cross-account
 - 🏗️ **Infrastructure as Code** - Fully declarative CDK-based infrastructure
 - 🏷️ **Public Domain Integration** - Custom domain endpoints (lukach.io)
 
@@ -146,14 +148,14 @@ This generates CloudFormation templates without deploying them.
 
 Deploy all stacks:
 ```bash
-cdk deploy --all
+cdk deploy --profile cog --all
 ```
 
 Or deploy specific stacks:
 ```bash
-cdk deploy CognitoStackUse1
-cdk deploy CognitoStackUse2
-cdk deploy CognitoStackUsw2
+cdk deploy --profile cog CognitoStackUse1
+cdk deploy --profile cog CognitoStackUse2
+cdk deploy --profile cog CognitoStackUsw2
 ```
 
 ### Destroy Resources
@@ -215,14 +217,23 @@ All resources are automatically tagged with:
 - **GitHub**: `https://github.com/jblukach/cognito`
 - **Org**: `lukach.io`
 
+### Secret Management
+
+- `credentials` secret stores `CLIENT_ID` and `CLIENT_SECRET` for Cognito app clients
+- Auth Lambdas receive only `CREDENTIALS_SECRET_ARN` and retrieve secret values from AWS Secrets Manager at runtime
+- `clientid` secret stores `CLIENT_ID` for login URL generation
+- Root Lambdas receive only `CLIENTID_SECRET_ARN` and retrieve the client ID at runtime
+- `clientid` uses customer-managed KMS keys and grants cross-account read/decrypt access to the lunker account
+
 ---
 
 ## Security Notes
 
-- Cognito User Pools enforce strong password policies
-- Lambda Authorizer validates all incoming API requests
+- Cognito User Pools enforce strong password and sign-in controls
+- Lambda Authorizer validates incoming API requests
 - Bearer tokens use JWT format with expiration times
-- All resources are created within private VPC contexts where applicable
+- Secrets are not injected as plaintext Lambda environment variables
+- IAM and key policies are scoped for secret access and cross-account sharing
 - Regularly rotate credentials and review IAM permissions
 
 ---
