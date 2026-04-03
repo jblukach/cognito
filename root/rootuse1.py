@@ -160,7 +160,7 @@ def handler(_event, _context):
 <body>
     <section id="lunker-help" class="help-modal-overlay" aria-hidden="true" aria-live="polite">
         <div class="help-modal" role="dialog" aria-modal="true" aria-label="Lunker Help">
-            <h2>Lunker Help - Invite Only</h2>
+            <h2 style="text-align:center">Lunker Help</h2>
             <ol class="help-steps">
                 <li>
                     <span>Click Login</span>
@@ -169,21 +169,21 @@ def handler(_event, _context):
                 </li>
                 <li>
                     <span>Enter Email Address</span>
-                    Type the email address associated with your invite and click <b>Continue</b>.
+                    Type the email address associated with your account and click <b>Next</b>.
                     <img src="https://cdn.lukach.io/help/signin.png" alt="Enter Email Address">
                 </li>
                 <li>
-                    <span>Enter the Code Sent to Your Email</span>
-                    Check your inbox for a one-time code. Enter it to sign in — no password required.
+                    <span>Enter the Code sent to your Email</span>
+                    Check your inbox for a one-time code. Enter it to sign in and click <b>Continue</b> — no password required.
                     <img src="https://cdn.lukach.io/help/passwordless.png" alt="Enter One-Time Code">
                 </li>
                 <li>
                     <span>Successful Login Redirects Automatically</span>
-                    After a valid code is accepted, you will be redirected back to the app automatically.
+                    After a valid code is accepted, you will be redirected back to the application automatically.
                     <img src="https://cdn.lukach.io/help/login-success.png" alt="Successful Login">
                 </li>
                 <li>
-                    <span>Failed Login Returns to Sign-In</span>
+                    <span>Failed Login returns to Sign-In</span>
                     If the code is invalid or expired, you will be returned to the sign-in page to try again.
                     <img src="https://cdn.lukach.io/help/login-failure.png" alt="Failed Login">
                 </li>

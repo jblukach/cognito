@@ -188,7 +188,9 @@ class CognitoStackUse1(Stack):
                     _cognito.OAuthScope.OPENID
                 ]
             ),
-            generate_secret = True
+            generate_secret = True,
+            access_token_validity = Duration.hours(1),
+            id_token_validity = Duration.hours(1)
         )
 
     #### COGNITO BRANDING ###
