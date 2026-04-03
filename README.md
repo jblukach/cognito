@@ -6,20 +6,21 @@ A production-ready AWS CDK infrastructure project that implements multi-region a
 
 This project provides a **highly available**, **geo-distributed** authentication architecture with:
 
-- **Multi-region User Pools** deployed across US regions for redundancy and low-latency access
+- **Regional Cognito User Pools** in us-east-1 and us-west-2 for redundancy and low-latency access
 - **Managed Cognito login pages** with customizable branding
 - **Regional API endpoints** for authentication and application logic
-- **Lambda Authorizer** integration for secure API access via Bearer tokens
+- **Bearer-token based API access** for authenticated calls to regional endpoints
 - **Infrastructure-as-Code** using AWS CDK with Python
 
 ### Key Features
 
-- 📍 **Multi-Region Deployment** - Independent User Pools in us-east-1, us-east-2, and us-west-2
+- 📍 **Multi-Region Deployment** - Cognito authentication stacks in us-east-1 and us-west-2, plus supporting CI/CD IAM in us-east-2
 - 🔐 **Secure Authentication** - Cognito-managed identity and access control
-- 🚀 **API Gateway Integration** - Lambda Authorizer for token validation
+- 🚪 **Hosted UI Logout** - Full logout via Cognito `/logout` endpoint clears the Cognito session
+- 🚀 **API Gateway Integration** - Regional auth and root Lambda handlers behind API endpoints
 - 🔑 **Bearer Token Support** - Standards-compliant JWT token handling
-- 🔒 **Runtime Secret Retrieval** - Auth and root Lambdas read secrets from Secrets Manager at invocation time
-- 🗝️ **KMS-Backed Secret Sharing** - `clientid` is encrypted with customer-managed KMS keys and shared cross-account
+- 🔒 **Runtime Secret Retrieval** - Auth Lambdas read `CLIENT_ID` and `CLIENT_SECRET` from Secrets Manager at invocation time
+- 🔐 **Secrets Manager Integration** - Credentials are loaded at runtime and not hardcoded in handlers
 - 🏗️ **Infrastructure as Code** - Fully declarative CDK-based infrastructure
 - 🏷️ **Public Domain Integration** - Custom domain endpoints (lukach.io)
 
@@ -39,8 +40,8 @@ Regional Login Pages
     └─ hello-usw2.lukach.io (US West 2)
     ↓
 Regional Auth Endpoints
-    ├─ use1.api.lukach.io/auth  
-    └─ usw2.api.lukach.io/auth
+    ├─ use1.api.lukach.io/auth        (login callback & logout)
+    └─ usw2.api.lukach.io/auth        (login callback & logout)
     ↓
 Protected API Endpoints
     ├─ use1.api.lukach.io/home (Bearer Token Required)
@@ -51,8 +52,14 @@ Protected API Endpoints
 
 - **Root Stack** - Serves as the entry point with domain routing
 - **Cognito Stacks** - Regional Cognito User Pool configurations
-- **Auth Handlers** - Lambda functions for authentication logic and token validation
-- **API Gateway** - Protected endpoints with Lambda Authorizer
+- **Auth Handlers** - Lambda functions for Cognito login callback, token exchange, and logout redirect
+- **API Gateway** - Regional endpoints that invoke auth and root handlers
+
+### Scope Note
+
+- This repository provisions Cognito, Lambda handlers, IAM, DNS, certificates, and related stack resources.
+- API Gateway route wiring, authorizer configuration, and client-side token storage/refresh behavior may be managed in other repositories or accounts.
+- Keep this README aligned to resources defined in this repository; document external dependencies explicitly when referenced.
 
 ---
 
@@ -96,15 +103,15 @@ cognito/
 ├── README.md                        # This file
 ├── LICENSE                          # License information
 │
-├── cognito/                         # Cognito stack definitions
+├── cognito/                         # Stack definitions
 │   ├── __init__.py
-│   ├── cognito_stackuse1.py         # US East 1 Cognito stack
-│   ├── cognito_stackuse2.py         # US East 2 Cognito stack
-│   └── cognito_stackusw2.py         # US West 2 Cognito stack
+│   ├── cognito_stackuse1.py         # US East 1 Cognito/auth stack
+│   ├── cognito_stackuse2.py         # US East 2 GitHub OIDC/IAM stack
+│   └── cognito_stackusw2.py         # US West 2 Cognito/auth stack
 │
-├── auth/                            # Lambda authorizer functions
-│   ├── authuse1.py                  # Authorizer for US East 1
-│   └── authusw2.py                  # Authorizer for US West 2
+├── auth/                            # Regional auth callback/logout handlers
+│   ├── authuse1.py                  # Auth callback/logout handler for US East 1
+│   └── authusw2.py                  # Auth callback/logout handler for US West 2
 │
 └── root/                            # Root endpoint handlers
     ├── rootuse1.py                  # Root handler for US East 1
@@ -173,11 +180,20 @@ cdk destroy --all
 
 1. User navigates to the root endpoint: `api.lukach.io`
 2. User is directed to a regional login page based on preference or proximity
-3. User authenticates with Cognito
-4. Upon successful authentication, user receives a Bearer token
-5. User includes the Bearer token in API requests
-6. Lambda Authorizer validates the token
-7. If valid, user can access protected endpoints (e.g., `/home`)
+3. User authenticates via the Cognito Hosted UI (`hello-<region>.lukach.io/login`)
+4. Cognito redirects back to the regional auth endpoint with an authorization `code`
+5. The auth Lambda exchanges the code for tokens via `oauth2/token` using `CLIENT_ID` and `CLIENT_SECRET`
+6. Upon successful token exchange, the user can access protected endpoints (e.g., `/home`) using a Bearer token
+7. The client includes the Bearer token when requesting protected regional endpoints (for example, `/home`)
+
+### Logout Flow
+
+1. Send the user to the regional auth endpoint with `?action=logout`:
+   - `https://use1.api.lukach.io/auth?action=logout`
+   - `https://usw2.api.lukach.io/auth?action=logout`
+2. The auth Lambda issues a `302` redirect to the Cognito `/logout` endpoint, which clears the Cognito Hosted UI session cookie
+3. Cognito redirects back to the registered `logout_uri` (`use1.api.lukach.io/auth` or `usw2.api.lukach.io/auth`)
+4. The user is presented with the unauthenticated login page
 
 ### API Request Example
 
@@ -221,19 +237,17 @@ All resources are automatically tagged with:
 
 - `credentials` secret stores `CLIENT_ID` and `CLIENT_SECRET` for Cognito app clients
 - Auth Lambdas receive only `CREDENTIALS_SECRET_ARN` and retrieve secret values from AWS Secrets Manager at runtime
-- `clientid` secret stores `CLIENT_ID` for login URL generation
-- Root Lambdas receive only `CLIENTID_SECRET_ARN` and retrieve the client ID at runtime
-- `clientid` uses customer-managed KMS keys and grants cross-account read/decrypt access to the lunker account
+- Root Lambdas receive `CLIENT_ID` directly as a Lambda environment variable (no Secrets Manager call required)
 
 ---
 
 ## Security Notes
 
 - Cognito User Pools enforce strong password and sign-in controls
-- Lambda Authorizer validates incoming API requests
+- Auth handlers perform the Cognito authorization-code token exchange over HTTPS
 - Bearer tokens use JWT format with expiration times
 - Secrets are not injected as plaintext Lambda environment variables
-- IAM and key policies are scoped for secret access and cross-account sharing
+- IAM policies are scoped for least-privilege secret access and API invocation
 - Regularly rotate credentials and review IAM permissions
 
 ---
@@ -243,7 +257,7 @@ All resources are automatically tagged with:
 CloudWatch logs are automatically created for:
 
 - **Cognito** - User authentication events
-- **Lambda Functions** - Authorizer and handler execution logs
+- **Lambda Functions** - Auth and root handler execution logs
 - **API Gateway** - Request and response logs
 
 Access logs in the AWS Console:
@@ -269,5 +283,6 @@ For issues, questions, or contributions, please open an issue on [GitHub](https:
 
 - [AWS CDK Documentation](https://docs.aws.amazon.com/cdk/)
 - [Amazon Cognito Documentation](https://docs.aws.amazon.com/cognito/)
-- [API Gateway Lambda Authorizers](https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-lambda-function-reuse.html)
+- [Cognito Logout Endpoint](https://docs.aws.amazon.com/cognito/latest/developerguide/logout-endpoint.html)
+- [API Gateway + Lambda Integration](https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-integrations.html)
 - [AWS CLI Reference](https://docs.aws.amazon.com/cli/)
