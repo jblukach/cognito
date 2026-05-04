@@ -480,8 +480,8 @@ class CognitoStackUse1(Stack):
             environment = dict(
                 CREDENTIALS_SECRET_ARN = credentials.secret_arn
             ),
-            timeout = Duration.seconds(7),
-            memory_size = 128,
+            timeout = Duration.seconds(30),
+            memory_size = 256,
             role = role,
             layers = [
                 requests
@@ -509,7 +509,7 @@ class CognitoStackUse1(Stack):
             environment = dict(
                 CLIENT_ID = appclient.user_pool_client_id
             ),
-            timeout = Duration.seconds(7),
+            timeout = Duration.seconds(3),
             memory_size = 128,
             role = role
         )
