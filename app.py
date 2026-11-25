@@ -7,6 +7,7 @@ os.environ.setdefault('JSII_RUNTIME_PACKAGE_CACHE_ROOT', os.path.expanduser('~/.
 import aws_cdk as cdk
 
 from cognito.cognito_stack import CognitoStack
+from cognito.cognito_domain import CognitoDomainStack
 
 app = cdk.App()
 
@@ -14,6 +15,16 @@ CognitoStack(app, "CognitoStack",
     env = cdk.Environment(
         account = os.getenv('CDK_DEFAULT_ACCOUNT'),
         region = 'us-east-2'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    )
+)
+
+CognitoDomainStack(app, "CognitoDomainStack",
+    env = cdk.Environment(
+        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
+        region = 'us-east-1'
     ),
     synthesizer = cdk.DefaultStackSynthesizer(
         qualifier = 'lukach'
