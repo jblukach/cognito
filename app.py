@@ -7,13 +7,22 @@ os.environ.setdefault('JSII_RUNTIME_PACKAGE_CACHE_ROOT', os.path.expanduser('~/.
 import aws_cdk as cdk
 
 from cognito.cognito_stack import CognitoStack
-from cognito.cognito_domain import CognitoDomainStack
+from cognito.cognito_domain import CognitoDomainStack, CognitoReplicaSesStack
+from cognito.cognito_idp import (
+    CognitoIdpStack,
+    CognitoManagedLoginStack,
+    CognitoReplicaConfigurationStack,
+    CognitoReplicaKeyStack,
+    CognitoReplicaStack,
+)
 
 app = cdk.App()
 
+account = os.getenv('CDK_DEFAULT_ACCOUNT')
+
 CognitoStack(app, "CognitoStack",
     env = cdk.Environment(
-        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
+        account = account,
         region = 'us-east-2'
     ),
     synthesizer = cdk.DefaultStackSynthesizer(
@@ -21,18 +30,101 @@ CognitoStack(app, "CognitoStack",
     )
 )
 
-CognitoDomainStack(app, "CognitoDomainStack",
+replica_ses_stack = CognitoReplicaSesStack(app, "CognitoReplicaSesStack",
     env = cdk.Environment(
-        account = os.getenv('CDK_DEFAULT_ACCOUNT'),
+        account = account,
+        region = 'us-west-2'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    ),
+    cross_region_references = True
+)
+
+domain_stack = CognitoDomainStack(app, "CognitoDomainStack",
+    replica_identity = replica_ses_stack.identity,
+    env = cdk.Environment(
+        account = account,
         region = 'us-east-1'
     ),
     synthesizer = cdk.DefaultStackSynthesizer(
         qualifier = 'lukach'
-    )
+    ),
+    cross_region_references = True
+)
+
+idp_stack = CognitoIdpStack(app, "CognitoIdpStack",
+    ses_identity_arn = domain_stack.primary_identity_arn,
+    ses_configuration_set = domain_stack.configuration_set_name,
+    env = cdk.Environment(
+        account = account,
+        region = 'us-east-1'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    ),
+    cross_region_references = True
+)
+
+replica_key_stack = CognitoReplicaKeyStack(app, "CognitoReplicaKeyStack",
+    primary_encryption_key = idp_stack.encryption_key,
+    env = cdk.Environment(
+        account = account,
+        region = 'us-west-2'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    ),
+    cross_region_references = True
+)
+
+replica_stack = CognitoReplicaStack(app, "CognitoReplicaStack",
+    primary_user_pool = idp_stack.user_pool,
+    replica_key_stack = replica_key_stack,
+    env = cdk.Environment(
+        account = account,
+        region = 'us-east-1'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    ),
+    cross_region_references = True
+)
+
+replica_configuration_stack = CognitoReplicaConfigurationStack(
+    app, "CognitoReplicaConfigurationStack",
+    primary_user_pool = idp_stack.user_pool,
+    ses_identity_arn = replica_ses_stack.identity_arn,
+    ses_configuration_set = replica_ses_stack.configuration_set_name,
+    replica_key_stack = replica_key_stack,
+    replica_registration_stack = replica_stack,
+    env = cdk.Environment(
+        account = account,
+        region = 'us-west-2'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    ),
+    cross_region_references = True
+)
+
+CognitoManagedLoginStack(app, "CognitoManagedLoginStack",
+    hosted_zone = domain_stack.hostzone,
+    user_pool = idp_stack.user_pool,
+    dashboard_client = idp_stack.dashboard_client,
+    replica_configuration_stack = replica_configuration_stack,
+    env = cdk.Environment(
+        account = account,
+        region = 'us-east-1'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    ),
+    cross_region_references = True
 )
 
 cdk.Tags.of(app).add('Alias','cognito')
-cdk.Tags.of(app).add('Domain','lukach.io')
+cdk.Tags.of(app).add('Domain','4n6ir.com')
 cdk.Tags.of(app).add('GitHub','https://github.com/jblukach/cognito')
 
 app.synth()
