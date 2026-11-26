@@ -348,6 +348,7 @@ class ManagedLoginFailoverTest(unittest.TestCase):
         components = branding["Properties"]["Settings"][
             "components"
         ]
+        self.assertFalse(components["pageBackground"]["image"]["enabled"])
         self.assertEqual(
             components["pageBackground"]["lightMode"]["color"],
             components["primaryButton"]["lightMode"]["defaults"]["backgroundColor"],

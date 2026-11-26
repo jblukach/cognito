@@ -728,7 +728,8 @@ class CognitoManagedLoginStack(Stack):
                         },
                     },
                     "pageBackground": {
-                        "lightMode": {"color": "bdefcaff"}
+                        "image": {"enabled": False},
+                        "lightMode": {"color": "bdefcaff"},
                     },
                     "pageHeader": {
                         "lightMode": {
