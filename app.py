@@ -9,6 +9,7 @@ import aws_cdk as cdk
 from cognito.cognito_stack import CognitoStack
 from cognito.cognito_domain import CognitoDomainStack, CognitoReplicaSesStack
 from cognito.cognito_idp import (
+    CognitoCredentialsStack,
     CognitoIdpStack,
     CognitoManagedLoginStack,
     CognitoReplicaConfigurationStack,
@@ -108,10 +109,24 @@ replica_configuration_stack = CognitoReplicaConfigurationStack(
     cross_region_references = True
 )
 
+credentials_stack = CognitoCredentialsStack(app, "CognitoCredentialsStack",
+    user_pool = idp_stack.user_pool,
+    replica_credentials_key = replica_configuration_stack.credentials_key,
+    env = cdk.Environment(
+        account = account,
+        region = 'us-east-1'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    ),
+    cross_region_references = True
+)
+
 CognitoManagedLoginStack(app, "CognitoManagedLoginStack",
     hosted_zone = domain_stack.hostzone,
     user_pool = idp_stack.user_pool,
     dashboard_client = idp_stack.dashboard_client,
+    edge_client = credentials_stack.edge_client,
     replica_configuration_stack = replica_configuration_stack,
     env = cdk.Environment(
         account = account,

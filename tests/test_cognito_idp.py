@@ -16,6 +16,7 @@ from aws_cdk.assertions import Template
 
 from cognito.cognito_domain import CognitoDomainStack, CognitoReplicaSesStack
 from cognito.cognito_idp import (
+    CognitoCredentialsStack,
     CognitoIdpStack,
     CognitoManagedLoginStack,
     CognitoReplicaConfigurationStack,
@@ -25,7 +26,7 @@ from cognito.cognito_idp import (
 
 
 class DashboardClientTest(unittest.TestCase):
-    def test_user_pool_allows_password_and_email_otp(self):
+    def test_user_pool_requires_mfa_with_totp_and_verified_passkeys(self):
         app = App()
         stack = CognitoIdpStack(
             app,
@@ -37,9 +38,15 @@ class DashboardClientTest(unittest.TestCase):
         pool = Template.from_stack(stack).to_json()["Resources"]["UserPool"]["Properties"]
         self.assertEqual(
             set(pool["Policies"]["SignInPolicy"]["AllowedFirstAuthFactors"]),
-            {"PASSWORD", "EMAIL_OTP"},
+            {"PASSWORD", "WEB_AUTHN"},
         )
-        self.assertEqual(pool["MfaConfiguration"], "OFF")
+        self.assertEqual(pool["MfaConfiguration"], "ON")
+        self.assertEqual(pool["EnabledMfas"], ["SOFTWARE_TOKEN_MFA"])
+        self.assertEqual(
+            pool["WebAuthnFactorConfiguration"], "MULTI_FACTOR_WITH_USER_VERIFICATION"
+        )
+        self.assertEqual(pool["WebAuthnRelyingPartyID"], "auth.4n6ir.com")
+        self.assertEqual(pool["WebAuthnUserVerification"], "required")
 
     def test_dashboard_urls_and_refresh_rotation(self):
         app = App()
@@ -54,7 +61,7 @@ class DashboardClientTest(unittest.TestCase):
             "AWS::Cognito::UserPoolClient"
         )
         self.assertEqual(len(clients), 1)
-        client = next(iter(clients.values()))["Properties"]
+        client = clients["DashboardAppClient"]["Properties"]
         self.assertEqual(
             client["CallbackURLs"],
             ["https://4n6ir.com/callback", "https://www.4n6ir.com/callback"],
@@ -66,6 +73,31 @@ class DashboardClientTest(unittest.TestCase):
         self.assertIn("ALLOW_USER_AUTH", client["ExplicitAuthFlows"])
         self.assertNotIn("ALLOW_REFRESH_TOKEN_AUTH", client["ExplicitAuthFlows"])
         self.assertEqual(client["RefreshTokenRotation"]["Feature"], "ENABLED")
+        self.assertEqual(client["RefreshTokenValidity"], 1)
+        self.assertEqual(client["TokenValidityUnits"]["RefreshToken"], "days")
+        self.assertEqual(client["AccessTokenValidity"], 15)
+        self.assertEqual(client["IdTokenValidity"], 15)
+
+        resources = Template.from_stack(stack).to_json()["Resources"]
+        tracking = resources["UserPoolSessionTracking"]
+        self.assertEqual(tracking["Properties"]["UserSessionTracking"], "ENABLED")
+        self.assertEqual(tracking["Properties"]["TokenSession"]["MaxPerUser"], 20)
+        session = resources["DashboardClientSession"]
+        self.assertEqual(session["Properties"]["SSOSession"]["MaxValidityMinutes"], 15)
+        self.assertIn("UserPoolSessionTracking", session["DependsOn"])
+
+    def test_verification_email_includes_code_and_safety_guidance(self):
+        app = App()
+        stack = CognitoIdpStack(
+            app, "TestIdp",
+            ses_identity_arn="arn:aws:ses:us-east-1:123456789012:identity/auth.4n6ir.com",
+            ses_configuration_set="test-configuration-set",
+            env=Environment(account="123456789012", region="us-east-1"),
+        )
+        pool = Template.from_stack(stack).to_json()["Resources"]["UserPool"]["Properties"]
+        message = pool["VerificationMessageTemplate"]["EmailMessage"]
+        self.assertIn("{####}", message)
+        self.assertIn("Never share", message)
 
 
 class LoggingAndIssuerTest(unittest.TestCase):
@@ -95,7 +127,47 @@ class LoggingAndIssuerTest(unittest.TestCase):
             replica_key_stack=replica_key, replica_registration_stack=replica,
             env=replica_env, cross_region_references=True,
         )
-
+        credentials = CognitoCredentialsStack(
+            app, "Credentials", user_pool=primary.user_pool,
+            replica_credentials_key=replica_configuration.credentials_key,
+            env=primary_env, cross_region_references=True,
+        )
+        credential_template = Template.from_stack(credentials).to_json()
+        credential_resources = credential_template["Resources"]
+        edge = credential_resources["EdgeAppClient"]["Properties"]
+        self.assertTrue(edge["GenerateSecret"])
+        self.assertEqual(
+            edge["CallbackURLs"],
+            ["https://4n6ir.com/callback", "https://www.4n6ir.com/callback"],
+        )
+        self.assertEqual(edge["RefreshTokenValidity"], 1)
+        self.assertEqual(
+            credential_resources["EdgeClientSession"]["Properties"]["SSOSession"]["MaxValidityMinutes"],
+            15,
+        )
+        secret = next(
+            resource for resource in credential_resources.values()
+            if resource["Type"] == "AWS::SecretsManager::Secret"
+        )["Properties"]
+        self.assertEqual(secret["Name"], "credentials")
+        self.assertEqual(secret["ReplicaRegions"][0]["Region"], "us-west-2")
+        secret_string = json.dumps(secret["SecretString"])
+        self.assertIn("CLIENT_ID", secret_string)
+        self.assertIn("CLIENT_SECRET", secret_string)
+        self.assertIn('"Fn::GetAtt": ["EdgeAppClient", "ClientSecret"]', secret_string)
+        self.assertNotIn("ClientSecret", json.dumps(credential_template.get("Outputs", {})))
+        for stack, region in ((credentials, "us-east-1"), (replica_configuration, "us-west-2")):
+            keys = Template.from_stack(stack).find_resources("AWS::KMS::Key")
+            key = next(value for name, value in keys.items() if name.startswith("CredentialsKey"))
+            policy = json.dumps(key["Properties"]["KeyPolicy"])
+            self.assertIn(f"secretsmanager.{region}.", policy)
+            self.assertIn(":secret:credentials-*", policy)
+            self.assertIn("kms:Decrypt", policy)
+            self.assertIn("accountdomains", policy)
+        policies = Template.from_stack(credentials).find_resources("AWS::SecretsManager::ResourcePolicy")
+        self.assertEqual(len(policies), 1)
+        self.assertIn("secretsmanager:GetSecretValue", json.dumps(policies))
+        self.assertIn("accountdomains", json.dumps(policies))
         for stack, resource_id, regions in (
             (primary, "UserPoolEncryptionKey", ("us-east-1", "us-west-2")),
             (replica_key, "UserPoolEncryptionKeyReplica", ("us-east-1", "us-west-2")),
@@ -208,12 +280,18 @@ class ManagedLoginFailoverTest(unittest.TestCase):
             replica_key_stack=replica_key, replica_registration_stack=replica,
             env=replica_env, cross_region_references=True,
         )
+        credentials = CognitoCredentialsStack(
+            app, "TestCredentials", user_pool=idp.user_pool,
+            replica_credentials_key=replica_configuration.credentials_key,
+            env=primary_env, cross_region_references=True,
+        )
         stack = CognitoManagedLoginStack(
             app,
             "TestLogin",
             hosted_zone=zone,
             user_pool=idp.user_pool,
             dashboard_client=idp.dashboard_client,
+            edge_client=credentials.edge_client,
             replica_configuration_stack=replica_configuration,
             env=primary_env,
             cross_region_references=True,
@@ -261,6 +339,26 @@ class ManagedLoginFailoverTest(unittest.TestCase):
                 "PrimaryRoute53HealthCheckId": {"Ref": health_id},
                 "SecondaryRegion": "us-west-2",
             },
+        )
+        self.assertEqual(
+            resources["ManagedLoginDomain"]["Properties"]["CustomDomainConfig"]["SecurityPolicy"],
+            "TLS_V1_3_2025",
+        )
+        components = resources["DashboardManagedLoginBranding"]["Properties"]["Settings"][
+            "components"
+        ]
+        self.assertEqual(components["pageBackground"]["lightMode"]["color"], "ffffffff")
+        self.assertEqual(
+            components["pageHeader"]["lightMode"]["background"]["color"], "ffffffff"
+        )
+        self.assertEqual(
+            components["primaryButton"]["lightMode"]["defaults"],
+            {"backgroundColor": "bdefcaff", "textColor": "172b1bff"},
+        )
+        self.assertEqual(components["form"]["lightMode"]["borderColor"], "bdefcaff")
+        self.assertEqual(
+            resources["EdgeManagedLoginBranding"]["Properties"]["Settings"],
+            resources["DashboardManagedLoginBranding"]["Properties"]["Settings"],
         )
         for record_type in ("A", "AAAA"):
             record = resources[f"ManagedLogin{record_type}Record"]["Properties"]

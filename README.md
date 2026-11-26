@@ -6,10 +6,25 @@ regional SES identities, security logs, and a public dashboard app client.
 
 ## Authentication
 
-- Users can self-register through Managed Login, which requires a password at
-  sign-up, and sign in with a password or an email one-time code. **Neither
-  is MFA**: Cognito does not support required MFA with native email-OTP
-  sign-in, so MFA is disabled for both sign-in methods.
+- Managed Login requires a password at sign-up. MFA is required: users sign in
+  with their password and an authenticator-app code, or with a registered
+  passkey that verifies the user. Email OTP is not available as a first
+  sign-in factor because Cognito does not support it with required MFA.
+- Passkeys must be registered after initial authentication. They are an
+  alternative first factor, not a second factor after a password. Managed Login
+  prompts users to set up MFA; test enrollment and both sign-in methods before
+  using this configuration. Cognito can issue tokens on a new user's first
+  sign-in after email confirmation, before an authenticator is enrolled.
+  See [Cognito MFA behavior](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-mfa.html).
+- Existing users can register a passkey on Cognito's Managed Login
+  `/passkeys/add` page after signing in. The application must link or redirect
+  them there with an active Managed Login session, its client ID, registered
+  redirect URI, and required OAuth parameters. See
+  [AWS passkey registration guidance](https://repost.aws/knowledge-center/cognito-passwordless-authentication).
+- Existing email-OTP users need a password and an authenticator or a registered
+  passkey. Plan their migration before deployment. Have a verified
+  administrator recovery process for lost authenticators; Cognito supports
+  [resetting a TOTP token](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_AdminDeleteSoftwareToken.html).
 - Confirmed self-registrations are added to the `DashboardUsers` group. Future
   applications should use their own groups or scopes for authorization rather
   than treating dashboard membership as access to every application.
@@ -17,12 +32,46 @@ regional SES identities, security logs, and a public dashboard app client.
   token rotation, and the `openid`, `email`, and `profile` scopes. Its
   callbacks are `/callback` and its sign-out URLs are `/` on both
   `https://4n6ir.com` and `https://www.4n6ir.com`.
+- Access and ID tokens last 15 minutes; refresh tokens last one day. Managed
+  Login SSO can be silently reused for 15 minutes after authentication. A
+  refresh token can still renew tokens during its lifetime.
+- Session tracking is enabled with Cognito's default limit of 20 active token
+  sessions per user. New sign-ins can evict the least recently used session.
+  Administrators can list and revoke individual sessions with Cognito APIs;
+  the dashboard must implement its own session-management interface.
+- The custom domain requires TLS 1.3. Older clients without TLS 1.3 cannot
+  connect.
 
 The future dashboard/edge application must implement those URLs, use PKCE, and
 validate token signatures, issuer, expiration, token use, and client ID. Use
 the OAuth token endpoint to refresh rotated tokens; `REFRESH_TOKEN_AUTH` is
 not enabled. Tokens from both Regions use the updated issuer for the primary
 Region.
+
+The existing dashboard client is public and has no secret. A separate
+confidential `DashboardEdge` client uses the same callback and logout URLs.
+The `credentials` Secrets Manager secret contains its `CLIENT_ID` and
+`CLIENT_SECRET` and is replicated from `us-east-1` to `us-west-2`. Cognito
+replicates the client configuration and secret to the replica pool as well.
+The secret's resource policy delegates reads to the account in
+`/account/domains`; each Region's customer-managed KMS key delegates decrypt
+to the account from that Region's parameter. Both parameters must contain
+the same account ID. The destination account must also grant its edge
+execution role `secretsmanager:GetSecretValue` and `kms:Decrypt` for the
+regional secret and key ARNs. The stacks output those ARNs, except that the
+replica secret ARN has the same suffix as the primary ARN with `us-west-2`
+as its Region. Restrict delegation to the role when its ARN is known.
+
+The secret does not secure CloudFront by itself. The edge integration must
+implement authorization-code + PKCE, protect its cookies, validate tokens
+and authorization on every protected request, and prevent direct origin
+access. It must accept tokens only for the confidential edge client, not the
+public dashboard client. It needs the Cognito domain, issuer, callback URLs, and pool ID as
+non-secret configuration. Self-registration is enabled and all confirmed
+self-registrations join `DashboardUsers`; requiring that group alone does not
+restrict access to a pre-approved audience. Secret replication is asynchronous;
+test regional reads and failover. Changing Cognito client credentials outside
+CDK does not automatically update this stored secret.
 
 ## Deployment
 
@@ -79,12 +128,15 @@ domain prerequisite. Then deploy:
 
 ```sh
 cdk deploy --profile cog CognitoIdpStack CognitoReplicaKeyStack CognitoReplicaStack \
-  CognitoReplicaConfigurationStack CognitoManagedLoginStack
+  CognitoReplicaConfigurationStack CognitoCredentialsStack CognitoManagedLoginStack
 ```
 
 The replica registration stack is in `us-east-1`; its KMS replica key and
-regional configuration are in `us-west-2`. The Managed Login stack depends on
-the replica configuration so domain failover is configured after activation.
+regional configuration are in `us-west-2`. Before deployment, confirm that
+the `/account/domains` SSM parameter exists in both Regions and contains the
+same destination account ID. The credentials stack depends on the replica's
+regional key; Managed Login depends on the credentials and replica
+configuration stacks.
 
 ### 3. Validate before production
 
@@ -92,19 +144,41 @@ Synthesis is not a live deployment test. Before directing users to the pool:
 
 1. Confirm all stacks completed, the `us-west-2` replica is active, and the
    custom domain and certificate are ready.
-2. Test self-registration, confirmation, password and email-OTP sign-in, and
-   assignment to `DashboardUsers`. Once the dashboard exists, test both callback
-   URLs, token validation, refresh, sign-out, and authorization.
+2. Test self-registration, confirmation, TOTP enrollment, password plus TOTP,
+   passkey registration and sign-in, and assignment to `DashboardUsers`. Verify
+   email-OTP-only sign-in is unavailable and test recovery for an authenticator.
+   Once the dashboard exists, test both callback URLs, token validation,
+   refresh, sign-out, and authorization.
 3. Check Cognito security and notification logs in both Regions and test SES
    delivery and feedback.
 4. Test automatic failover, replica sign-in and email delivery, and failback.
    Verify that the primary health-check prefix remains primary-specific during
    failover; an override alone does not test detection of an endpoint failure.
+5. Test TLS 1.3 client compatibility, session listing and revocation, and
+   reauthentication after the SSO and refresh-token limits. Test that the
+   verification template also reads correctly for password resets.
+6. After the Domains account grants its edge role permissions, test reading
+   the confidential client secret in both Regions without logging its value,
+   and confirm the replica is in sync. Test the edge authentication, callback,
+   authorization and origin restrictions before exposing the dashboard.
 
-Plus threat protection is enabled, but password-specific protections do not
-apply to email-OTP sign-in. Verify the protection and logs available for both
-flows. Threat protection is not a rate limiter; consider AWS WAF and
-operational alarms for a public production identity provider.
+Plus threat protection is enabled. Risk-based MFA responses require optional
+MFA and are not used with required MFA. Verify effective risk actions and logs
+for both flows; threat protection is not a rate limiter. Consider AWS WAF and
+operational alarms for a public production identity provider. Managed Login
+automatically includes device information in advanced security logs; remembered
+devices are separate and can bypass MFA, so they are not enabled here.
+
+## Point-in-time recovery
+
+Cognito automatically enables point-in-time recovery for eligible Plus pools,
+with up to 14 days of user-data history; no CDK setting is required. Confirm
+that recovery is available in the Cognito console. Recoveries are initiated in
+the primary Region, pause writes even while the preview is pending, and
+replicate restored user data to the replica. Recovery does not restore pool
+configuration, app clients, sessions, or remembered devices. See the
+[AWS recovery documentation](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-point-in-time-recovery.html)
+before initiating one.
 
 ## Regional failover
 

@@ -1,11 +1,15 @@
 import json
 
 from aws_cdk import (
+    Acknowledgment,
+    ArnFormat,
     Aws,
     CfnOutput,
     Duration,
     RemovalPolicy,
+    SecretValue,
     Stack,
+    Validations,
     aws_certificatemanager as _acm,
     aws_cognito as _cognito,
     aws_iam as _iam,
@@ -14,6 +18,8 @@ from aws_cdk import (
     aws_logs as _logs,
     aws_route53 as _route53,
     aws_route53_targets as _route53_targets,
+    aws_secretsmanager as _secrets,
+    aws_ssm as _ssm,
 )
 from constructs import Construct
 
@@ -23,6 +29,40 @@ EMAIL_IDENTITY_DOMAIN = AUTH_DOMAIN
 EMAIL_FROM_ADDRESS = "no-reply@auth.4n6ir.com"
 REPLICA_REGION = "us-west-2"
 LOG_RETENTION = _logs.RetentionDays.THIRTEEN_MONTHS
+DOMAINS_ACCOUNT_PARAMETER = "/account/domains"
+
+
+def _credentials_key(scope: Stack) -> _kms.Key:
+    domains_account = _ssm.StringParameter.value_for_string_parameter(
+        scope, DOMAINS_ACCOUNT_PARAMETER
+    )
+    key = _kms.Key(
+        scope,
+        "CredentialsKey",
+        description="Encrypts regional CloudFront Cognito credentials",
+        enable_key_rotation=True,
+        removal_policy=RemovalPolicy.RETAIN,
+    )
+    key.add_to_resource_policy(
+        _iam.PolicyStatement(
+            principals=[_iam.AccountPrincipal(domains_account)],
+            actions=["kms:Decrypt"],
+            resources=["*"],
+            conditions={
+                "StringEquals": {
+                    "kms:ViaService": f"secretsmanager.{scope.region}.{Aws.URL_SUFFIX}",
+                },
+                "StringLike": {
+                    "kms:EncryptionContext:SecretARN": scope.format_arn(
+                        service="secretsmanager", resource="secret",
+                        resource_name="credentials-*",
+                        arn_format=ArnFormat.COLON_RESOURCE_NAME,
+                    ),
+                },
+            },
+        )
+    )
+    return key
 
 
 def _key_policy(account: str, regions: list[str]) -> dict:
@@ -270,7 +310,7 @@ class CognitoIdpStack(Stack):
             ),
             policies=_cognito.CfnUserPool.PoliciesProperty(
                 sign_in_policy=_cognito.CfnUserPool.SignInPolicyProperty(
-                    allowed_first_auth_factors=["PASSWORD", "EMAIL_OTP"]
+                    allowed_first_auth_factors=["PASSWORD", "WEB_AUTHN"]
                 )
             ),
             email_configuration=_cognito.CfnUserPool.EmailConfigurationProperty(
@@ -280,18 +320,22 @@ class CognitoIdpStack(Stack):
                 reply_to_email_address=EMAIL_REPLY_TO_ADDRESS,
                 source_arn=ses_identity_arn,
             ),
-            email_authentication_subject="Your 4n6ir sign-in code",
-            email_authentication_message=(
-                "Your one-time sign-in code is {####}."
-            ),
             verification_message_template=(
                 _cognito.CfnUserPool.VerificationMessageTemplateProperty(
                     default_email_option="CONFIRM_WITH_CODE",
                     email_subject="Confirm your 4n6ir account",
-                    email_message="Your account confirmation code is {####}.",
+                    email_message=(
+                        "Your 4n6ir verification code is <strong>{####}</strong>."
+                        "<br><br>Enter this code to continue. Never share it with anyone."
+                        "<br><br>If you didn't request this code, you can ignore this email."
+                    ),
                 )
             ),
-            mfa_configuration="OFF",
+            mfa_configuration="ON",
+            enabled_mfas=["SOFTWARE_TOKEN_MFA"],
+            web_authn_factor_configuration="MULTI_FACTOR_WITH_USER_VERIFICATION",
+            web_authn_relying_party_id=AUTH_DOMAIN,
+            web_authn_user_verification="required",
             key_configuration=_cognito.CfnUserPool.KeyConfigurationProperty(
                 key_type="CUSTOMER_MANAGED_KEY",
                 kms_key_arn=encryption_key.attr_arn,
@@ -345,7 +389,7 @@ class CognitoIdpStack(Stack):
             prevent_user_existence_errors="ENABLED",
             access_token_validity=15,
             id_token_validity=15,
-            refresh_token_validity=30,
+            refresh_token_validity=1,
             token_validity_units=_cognito.CfnUserPoolClient.TokenValidityUnitsProperty(
                 access_token="minutes",
                 id_token="minutes",
@@ -359,6 +403,37 @@ class CognitoIdpStack(Stack):
             ),
         )
         self.dashboard_client = dashboard_client
+
+        session_tracking = _cognito.CfnUserPoolSessionConfigurationAttachment(
+            self,
+            "UserPoolSessionTracking",
+            user_pool_id=user_pool.ref,
+            user_session_tracking="ENABLED",
+            token_session=(
+                _cognito.CfnUserPoolSessionConfigurationAttachment.TokenSessionProperty(
+                    max_per_user=20
+                )
+            ),
+        )
+        client_session = _cognito.CfnUserPoolClientSessionConfigurationAttachment(
+            self,
+            "DashboardClientSession",
+            user_pool_id=user_pool.ref,
+            client_id=dashboard_client.ref,
+            sso_session=(
+                _cognito.CfnUserPoolClientSessionConfigurationAttachment.SSOSessionProperty(
+                    max_validity_minutes=15
+                )
+            ),
+        )
+        client_session.add_resource_dependency(session_tracking)
+        for resource in (session_tracking, client_session):
+            Validations.of(resource).acknowledge(
+                Acknowledgment(
+                    id="CloudFormation-Validate::F3006",
+                    reason="The Cognito session resource is live in CloudFormation; CDK's bundled schema is stale.",
+                )
+            )
 
         log_group, _ = _add_log_delivery(
             self, user_pool.ref, "us-east-1", "Primary"
@@ -450,6 +525,7 @@ class CognitoReplicaConfigurationStack(Stack):
 
         self.add_stack_dependency(replica_key_stack)
         self.add_stack_dependency(replica_registration_stack)
+        self.credentials_key = _credentials_key(self)
         regional_configuration = (
             _cognito.CfnUserPoolRegionalConfigurationAttachment(
                 self,
@@ -487,6 +563,99 @@ class CognitoReplicaConfigurationStack(Stack):
             ),
         )
         CfnOutput(self, "ReplicaSecurityLogGroup", value=log_group.log_group_name)
+        CfnOutput(self, "ReplicaCredentialsKeyArn", value=self.credentials_key.key_arn)
+
+
+class CognitoCredentialsStack(Stack):
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        *,
+        user_pool: _cognito.CfnUserPool,
+        replica_credentials_key: _kms.IKey,
+        **kwargs,
+    ) -> None:
+        super().__init__(scope, construct_id, **kwargs)
+
+        domains_account = _ssm.StringParameter.value_for_string_parameter(
+            self, DOMAINS_ACCOUNT_PARAMETER
+        )
+        edge_client = _cognito.CfnUserPoolClient(
+            self,
+            "EdgeAppClient",
+            user_pool_id=user_pool.ref,
+            client_name="DashboardEdge",
+            generate_secret=True,
+            explicit_auth_flows=["ALLOW_USER_AUTH"],
+            allowed_o_auth_flows=["code"],
+            allowed_o_auth_flows_user_pool_client=True,
+            allowed_o_auth_scopes=["openid", "email", "profile"],
+            callback_ur_ls=[
+                "https://4n6ir.com/callback",
+                "https://www.4n6ir.com/callback",
+            ],
+            logout_ur_ls=["https://4n6ir.com/", "https://www.4n6ir.com/"],
+            supported_identity_providers=["COGNITO"],
+            enable_token_revocation=True,
+            prevent_user_existence_errors="ENABLED",
+            access_token_validity=15,
+            id_token_validity=15,
+            refresh_token_validity=1,
+            token_validity_units=_cognito.CfnUserPoolClient.TokenValidityUnitsProperty(
+                access_token="minutes", id_token="minutes", refresh_token="days"
+            ),
+            refresh_token_rotation=(
+                _cognito.CfnUserPoolClient.RefreshTokenRotationProperty(
+                    feature="ENABLED", retry_grace_period_seconds=5
+                )
+            ),
+        )
+        self.edge_client = edge_client
+        edge_session = _cognito.CfnUserPoolClientSessionConfigurationAttachment(
+            self,
+            "EdgeClientSession",
+            user_pool_id=user_pool.ref,
+            client_id=edge_client.ref,
+            sso_session=(
+                _cognito.CfnUserPoolClientSessionConfigurationAttachment.SSOSessionProperty(
+                    max_validity_minutes=15
+                )
+            ),
+        )
+        Validations.of(edge_session).acknowledge(
+            Acknowledgment(
+                id="CloudFormation-Validate::F3006",
+                reason="The Cognito session resource is live in CloudFormation; CDK's bundled schema is stale.",
+            )
+        )
+        key = _credentials_key(self)
+        credentials = _secrets.Secret(
+            self,
+            "Credentials",
+            secret_name="credentials",
+            encryption_key=key,
+            removal_policy=RemovalPolicy.RETAIN,
+            secret_object_value={
+                "CLIENT_ID": SecretValue.unsafe_plain_text(edge_client.ref),
+                "CLIENT_SECRET": SecretValue.unsafe_plain_text(edge_client.attr_client_secret),
+            },
+            replica_regions=[
+                _secrets.ReplicaRegion(
+                    region=REPLICA_REGION,
+                    encryption_key=replica_credentials_key,
+                )
+            ],
+        )
+        credentials.add_to_resource_policy(
+            _iam.PolicyStatement(
+                principals=[_iam.AccountPrincipal(domains_account)],
+                actions=["secretsmanager:GetSecretValue"],
+                resources=["*"],
+            )
+        )
+        CfnOutput(self, "CredentialsSecretArn", value=credentials.secret_arn)
+        CfnOutput(self, "CredentialsKeyArn", value=key.key_arn)
 
 
 class CognitoManagedLoginStack(Stack):
@@ -498,6 +667,7 @@ class CognitoManagedLoginStack(Stack):
         hosted_zone: _route53.IHostedZone,
         user_pool: _cognito.CfnUserPool,
         dashboard_client: _cognito.CfnUserPoolClient,
+        edge_client: _cognito.CfnUserPoolClient,
         replica_configuration_stack: CognitoReplicaConfigurationStack,
         **kwargs,
     ) -> None:
@@ -539,7 +709,7 @@ class CognitoManagedLoginStack(Stack):
             custom_domain_config=(
                 _cognito.CfnUserPoolDomain.CustomDomainConfigTypeProperty(
                     certificate_arn=certificate.certificate_arn,
-                    security_policy="TLS_V1_2_2021",
+                    security_policy="TLS_V1_3_2025",
                 )
             ),
             routing=_cognito.CfnUserPoolDomain.RoutingTypeProperty(
@@ -604,16 +774,16 @@ class CognitoManagedLoginStack(Stack):
                         "borderRadius": 12.0,
                         "lightMode": {
                             "backgroundColor": "ffffffff",
-                            "borderColor": "c7e7ceff",
+                            "borderColor": "bdefcaff",
                         },
                     },
                     "pageBackground": {
-                        "lightMode": {"color": "f4fbf6ff"}
+                        "lightMode": {"color": "ffffffff"}
                     },
                     "pageHeader": {
                         "lightMode": {
-                            "background": {"color": "b9eac5ff"},
-                            "borderColor": "b9eac5ff",
+                            "background": {"color": "ffffffff"},
+                            "borderColor": "ffffffff",
                         },
                         "logo": {"enabled": False, "location": "START"},
                     },
@@ -627,16 +797,16 @@ class CognitoManagedLoginStack(Stack):
                     "primaryButton": {
                         "lightMode": {
                             "active": {
-                                "backgroundColor": "14532dff",
-                                "textColor": "ffffffff",
+                                "backgroundColor": "96cda5ff",
+                                "textColor": "172b1bff",
                             },
                             "defaults": {
-                                "backgroundColor": "1b5e20ff",
-                                "textColor": "ffffffff",
+                                "backgroundColor": "bdefcaff",
+                                "textColor": "172b1bff",
                             },
                             "hover": {
-                                "backgroundColor": "2e7d32ff",
-                                "textColor": "ffffffff",
+                                "backgroundColor": "a9deb8ff",
+                                "textColor": "172b1bff",
                             },
                         }
                     },
@@ -644,6 +814,15 @@ class CognitoManagedLoginStack(Stack):
             },
         )
         branding.add_resource_dependency(primary_domain)
+        edge_branding = _cognito.CfnManagedLoginBranding(
+            self,
+            "EdgeManagedLoginBranding",
+            user_pool_id=user_pool.ref,
+            client_id=edge_client.ref,
+            use_cognito_provided_values=False,
+            settings=branding.settings,
+        )
+        edge_branding.add_resource_dependency(primary_domain)
         health_check.node.add_dependency(branding)
 
         CfnOutput(self, "HostedLoginUrl", value=f"https://{AUTH_DOMAIN}")
