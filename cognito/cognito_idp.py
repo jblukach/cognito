@@ -369,41 +369,6 @@ class CognitoIdpStack(Stack):
             description="Birthright access for self-registered dashboard users",
         )
 
-        dashboard_client = _cognito.CfnUserPoolClient(
-            self,
-            "DashboardAppClient",
-            user_pool_id=user_pool.ref,
-            client_name="Dashboard",
-            generate_secret=False,
-            explicit_auth_flows=["ALLOW_USER_AUTH"],
-            allowed_o_auth_flows=["code"],
-            allowed_o_auth_flows_user_pool_client=True,
-            allowed_o_auth_scopes=["openid", "email", "profile"],
-            callback_ur_ls=[
-                "https://4n6ir.com/callback",
-                "https://www.4n6ir.com/callback",
-            ],
-            logout_ur_ls=["https://4n6ir.com/", "https://www.4n6ir.com/"],
-            supported_identity_providers=["COGNITO"],
-            enable_token_revocation=True,
-            prevent_user_existence_errors="ENABLED",
-            access_token_validity=15,
-            id_token_validity=15,
-            refresh_token_validity=1,
-            token_validity_units=_cognito.CfnUserPoolClient.TokenValidityUnitsProperty(
-                access_token="minutes",
-                id_token="minutes",
-                refresh_token="days",
-            ),
-            refresh_token_rotation=(
-                _cognito.CfnUserPoolClient.RefreshTokenRotationProperty(
-                    feature="ENABLED",
-                    retry_grace_period_seconds=5,
-                )
-            ),
-        )
-        self.dashboard_client = dashboard_client
-
         session_tracking = _cognito.CfnUserPoolSessionConfigurationAttachment(
             self,
             "UserPoolSessionTracking",
@@ -415,32 +380,18 @@ class CognitoIdpStack(Stack):
                 )
             ),
         )
-        client_session = _cognito.CfnUserPoolClientSessionConfigurationAttachment(
-            self,
-            "DashboardClientSession",
-            user_pool_id=user_pool.ref,
-            client_id=dashboard_client.ref,
-            sso_session=(
-                _cognito.CfnUserPoolClientSessionConfigurationAttachment.SSOSessionProperty(
-                    max_validity_minutes=15
-                )
-            ),
-        )
-        client_session.add_resource_dependency(session_tracking)
-        for resource in (session_tracking, client_session):
-            Validations.of(resource).acknowledge(
-                Acknowledgment(
-                    id="CloudFormation-Validate::F3006",
-                    reason="The Cognito session resource is live in CloudFormation; CDK's bundled schema is stale.",
-                )
+        Validations.of(session_tracking).acknowledge(
+            Acknowledgment(
+                id="CloudFormation-Validate::F3006",
+                reason="The Cognito session resource is live in CloudFormation; CDK's bundled schema is stale.",
             )
+        )
 
         log_group, _ = _add_log_delivery(
             self, user_pool.ref, "us-east-1", "Primary"
         )
 
         CfnOutput(self, "UserPoolId", value=user_pool.ref)
-        CfnOutput(self, "DashboardAppClientId", value=dashboard_client.ref)
         CfnOutput(
             self,
             "UpdatedIssuer",
@@ -666,7 +617,6 @@ class CognitoManagedLoginStack(Stack):
         *,
         hosted_zone: _route53.IHostedZone,
         user_pool: _cognito.CfnUserPool,
-        dashboard_client: _cognito.CfnUserPoolClient,
         edge_client: _cognito.CfnUserPoolClient,
         replica_configuration_stack: CognitoReplicaConfigurationStack,
         **kwargs,
@@ -694,7 +644,7 @@ class CognitoManagedLoginStack(Stack):
             fqdn=f"{primary_domain.ref}.auth.{Aws.REGION}.amazoncognito.com",
             port=443,
             resource_path=(
-                f"/login?response_type=code&client_id={dashboard_client.ref}"
+                f"/login?response_type=code&client_id={edge_client.ref}"
                 "&redirect_uri=https%3A%2F%2F4n6ir.com%2Fcallback"
             ),
             request_interval=Duration.seconds(30),
@@ -719,7 +669,7 @@ class CognitoManagedLoginStack(Stack):
                 )
             ),
         )
-        domain.add_resource_dependency(dashboard_client)
+        domain.add_resource_dependency(edge_client)
 
         for record_type in ("A", "AAAA"):
             _route53.CfnRecordSet(
@@ -739,9 +689,9 @@ class CognitoManagedLoginStack(Stack):
 
         branding = _cognito.CfnManagedLoginBranding(
             self,
-            "DashboardManagedLoginBranding",
+            "EdgeManagedLoginBranding",
             user_pool_id=user_pool.ref,
-            client_id=dashboard_client.ref,
+            client_id=edge_client.ref,
             use_cognito_provided_values=False,
             settings={
                 "categories": {
@@ -778,7 +728,7 @@ class CognitoManagedLoginStack(Stack):
                         },
                     },
                     "pageBackground": {
-                        "lightMode": {"color": "ffffffff"}
+                        "lightMode": {"color": "bdefcaff"}
                     },
                     "pageHeader": {
                         "lightMode": {
@@ -814,15 +764,6 @@ class CognitoManagedLoginStack(Stack):
             },
         )
         branding.add_resource_dependency(primary_domain)
-        edge_branding = _cognito.CfnManagedLoginBranding(
-            self,
-            "EdgeManagedLoginBranding",
-            user_pool_id=user_pool.ref,
-            client_id=edge_client.ref,
-            use_cognito_provided_values=False,
-            settings=branding.settings,
-        )
-        edge_branding.add_resource_dependency(primary_domain)
         health_check.node.add_dependency(branding)
 
         CfnOutput(self, "HostedLoginUrl", value=f"https://{AUTH_DOMAIN}")

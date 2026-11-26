@@ -125,7 +125,6 @@ credentials_stack = CognitoCredentialsStack(app, "CognitoCredentialsStack",
 CognitoManagedLoginStack(app, "CognitoManagedLoginStack",
     hosted_zone = domain_stack.hostzone,
     user_pool = idp_stack.user_pool,
-    dashboard_client = idp_stack.dashboard_client,
     edge_client = credentials_stack.edge_client,
     replica_configuration_stack = replica_configuration_stack,
     env = cdk.Environment(

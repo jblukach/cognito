@@ -25,7 +25,7 @@ from cognito.cognito_idp import (
 )
 
 
-class DashboardClientTest(unittest.TestCase):
+class CognitoClientTest(unittest.TestCase):
     def test_user_pool_requires_mfa_with_totp_and_verified_passkeys(self):
         app = App()
         stack = CognitoIdpStack(
@@ -48,7 +48,7 @@ class DashboardClientTest(unittest.TestCase):
         self.assertEqual(pool["WebAuthnRelyingPartyID"], "auth.4n6ir.com")
         self.assertEqual(pool["WebAuthnUserVerification"], "required")
 
-    def test_dashboard_urls_and_refresh_rotation(self):
+    def test_user_pool_has_no_public_app_client(self):
         app = App()
         stack = CognitoIdpStack(
             app,
@@ -60,31 +60,12 @@ class DashboardClientTest(unittest.TestCase):
         clients = Template.from_stack(stack).find_resources(
             "AWS::Cognito::UserPoolClient"
         )
-        self.assertEqual(len(clients), 1)
-        client = clients["DashboardAppClient"]["Properties"]
-        self.assertEqual(
-            client["CallbackURLs"],
-            ["https://4n6ir.com/callback", "https://www.4n6ir.com/callback"],
-        )
-        self.assertEqual(
-            client["LogoutURLs"], ["https://4n6ir.com/", "https://www.4n6ir.com/"]
-        )
-        self.assertNotIn("DefaultRedirectURI", client)
-        self.assertIn("ALLOW_USER_AUTH", client["ExplicitAuthFlows"])
-        self.assertNotIn("ALLOW_REFRESH_TOKEN_AUTH", client["ExplicitAuthFlows"])
-        self.assertEqual(client["RefreshTokenRotation"]["Feature"], "ENABLED")
-        self.assertEqual(client["RefreshTokenValidity"], 1)
-        self.assertEqual(client["TokenValidityUnits"]["RefreshToken"], "days")
-        self.assertEqual(client["AccessTokenValidity"], 15)
-        self.assertEqual(client["IdTokenValidity"], 15)
+        self.assertEqual(clients, {})
 
         resources = Template.from_stack(stack).to_json()["Resources"]
         tracking = resources["UserPoolSessionTracking"]
         self.assertEqual(tracking["Properties"]["UserSessionTracking"], "ENABLED")
         self.assertEqual(tracking["Properties"]["TokenSession"]["MaxPerUser"], 20)
-        session = resources["DashboardClientSession"]
-        self.assertEqual(session["Properties"]["SSOSession"]["MaxValidityMinutes"], 15)
-        self.assertIn("UserPoolSessionTracking", session["DependsOn"])
 
     def test_verification_email_includes_code_and_safety_guidance(self):
         app = App()
@@ -134,13 +115,23 @@ class LoggingAndIssuerTest(unittest.TestCase):
         )
         credential_template = Template.from_stack(credentials).to_json()
         credential_resources = credential_template["Resources"]
+        clients = Template.from_stack(credentials).find_resources(
+            "AWS::Cognito::UserPoolClient"
+        )
+        self.assertEqual(set(clients), {"EdgeAppClient"})
         edge = credential_resources["EdgeAppClient"]["Properties"]
         self.assertTrue(edge["GenerateSecret"])
+        self.assertIn("ALLOW_USER_AUTH", edge["ExplicitAuthFlows"])
+        self.assertNotIn("ALLOW_REFRESH_TOKEN_AUTH", edge["ExplicitAuthFlows"])
+        self.assertEqual(edge["RefreshTokenRotation"]["Feature"], "ENABLED")
         self.assertEqual(
             edge["CallbackURLs"],
             ["https://4n6ir.com/callback", "https://www.4n6ir.com/callback"],
         )
+        self.assertEqual(edge["LogoutURLs"], ["https://4n6ir.com/", "https://www.4n6ir.com/"])
         self.assertEqual(edge["RefreshTokenValidity"], 1)
+        self.assertEqual(edge["AccessTokenValidity"], 15)
+        self.assertEqual(edge["IdTokenValidity"], 15)
         self.assertEqual(
             credential_resources["EdgeClientSession"]["Properties"]["SSOSession"]["MaxValidityMinutes"],
             15,
@@ -290,7 +281,6 @@ class ManagedLoginFailoverTest(unittest.TestCase):
             "TestLogin",
             hosted_zone=zone,
             user_pool=idp.user_pool,
-            dashboard_client=idp.dashboard_client,
             edge_client=credentials.edge_client,
             replica_configuration_stack=replica_configuration,
             env=primary_env,
@@ -328,11 +318,12 @@ class ManagedLoginFailoverTest(unittest.TestCase):
         self.assertIn(
             "/login?response_type=code&client_id=", json.dumps(config["ResourcePath"])
         )
+        self.assertIn("EdgeAppClient", json.dumps(config["ResourcePath"]))
         self.assertIn(
             "redirect_uri=https%3A%2F%2F4n6ir.com%2Fcallback",
             json.dumps(config["ResourcePath"]),
         )
-        self.assertIn("DashboardManagedLoginBranding", health_check["DependsOn"])
+        self.assertIn("EdgeManagedLoginBranding", health_check["DependsOn"])
         self.assertEqual(
             resources["ManagedLoginDomain"]["Properties"]["Routing"]["Failover"],
             {
@@ -344,10 +335,23 @@ class ManagedLoginFailoverTest(unittest.TestCase):
             resources["ManagedLoginDomain"]["Properties"]["CustomDomainConfig"]["SecurityPolicy"],
             "TLS_V1_3_2025",
         )
-        components = resources["DashboardManagedLoginBranding"]["Properties"]["Settings"][
+        branding = resources["EdgeManagedLoginBranding"]
+        self.assertIn("EdgeAppClient", json.dumps(branding["Properties"]["ClientId"]))
+        self.assertEqual(
+            {
+                key
+                for key, resource in resources.items()
+                if resource["Type"] == "AWS::Cognito::ManagedLoginBranding"
+            },
+            {"EdgeManagedLoginBranding"},
+        )
+        components = branding["Properties"]["Settings"][
             "components"
         ]
-        self.assertEqual(components["pageBackground"]["lightMode"]["color"], "ffffffff")
+        self.assertEqual(
+            components["pageBackground"]["lightMode"]["color"],
+            components["primaryButton"]["lightMode"]["defaults"]["backgroundColor"],
+        )
         self.assertEqual(
             components["pageHeader"]["lightMode"]["background"]["color"], "ffffffff"
         )
@@ -356,10 +360,6 @@ class ManagedLoginFailoverTest(unittest.TestCase):
             {"backgroundColor": "bdefcaff", "textColor": "172b1bff"},
         )
         self.assertEqual(components["form"]["lightMode"]["borderColor"], "bdefcaff")
-        self.assertEqual(
-            resources["EdgeManagedLoginBranding"]["Properties"]["Settings"],
-            resources["DashboardManagedLoginBranding"]["Properties"]["Settings"],
-        )
         for record_type in ("A", "AAAA"):
             record = resources[f"ManagedLogin{record_type}Record"]["Properties"]
             self.assertEqual(record["Type"], record_type)

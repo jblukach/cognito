@@ -2,7 +2,8 @@
 
 This CDK app creates a Cognito Plus user pool in `us-east-1`, with a replica
 in `us-west-2` and Managed Login v2 at `auth.4n6ir.com`. It also configures
-regional SES identities, security logs, and a public dashboard app client.
+regional SES identities, security logs, and a confidential app client for the
+Lambda@Edge integration.
 
 ## Authentication
 
@@ -28,9 +29,9 @@ regional SES identities, security logs, and a public dashboard app client.
 - Confirmed self-registrations are added to the `DashboardUsers` group. Future
   applications should use their own groups or scopes for authorization rather
   than treating dashboard membership as access to every application.
-- The public dashboard client uses the OAuth authorization-code flow, refresh
-  token rotation, and the `openid`, `email`, and `profile` scopes. Its
-  callbacks are `/callback` and its sign-out URLs are `/` on both
+- The confidential `DashboardEdge` client uses the OAuth authorization-code
+  flow, refresh token rotation, and the `openid`, `email`, and `profile`
+  scopes. Its callbacks are `/callback` and its sign-out URLs are `/` on both
   `https://4n6ir.com` and `https://www.4n6ir.com`.
 - Access and ID tokens last 15 minutes; refresh tokens last one day. Managed
   Login SSO can be silently reused for 15 minutes after authentication. A
@@ -38,19 +39,19 @@ regional SES identities, security logs, and a public dashboard app client.
 - Session tracking is enabled with Cognito's default limit of 20 active token
   sessions per user. New sign-ins can evict the least recently used session.
   Administrators can list and revoke individual sessions with Cognito APIs;
-  the dashboard must implement its own session-management interface.
+  the application must implement its own session-management interface.
 - The custom domain requires TLS 1.3. Older clients without TLS 1.3 cannot
   connect.
 
-The future dashboard/edge application must implement those URLs, use PKCE, and
-validate token signatures, issuer, expiration, token use, and client ID. Use
-the OAuth token endpoint to refresh rotated tokens; `REFRESH_TOKEN_AUTH` is
-not enabled. Tokens from both Regions use the updated issuer for the primary
-Region.
+The Lambda@Edge integration must redirect unauthenticated requests to Managed
+Login using the confidential `DashboardEdge` client ID, use PKCE, and validate
+token signatures, issuer, expiration, token use, and client ID. It must use the
+client secret from Secrets Manager when exchanging the authorization code at
+the OAuth token endpoint; never expose the secret in a browser. Use the token
+endpoint to refresh rotated tokens; `REFRESH_TOKEN_AUTH` is not enabled. Tokens
+from both Regions use the updated issuer for the primary Region.
 
-The existing dashboard client is public and has no secret. A separate
-confidential `DashboardEdge` client uses the same callback and logout URLs.
-The `credentials` Secrets Manager secret contains its `CLIENT_ID` and
+The `credentials` Secrets Manager secret contains the client's `CLIENT_ID` and
 `CLIENT_SECRET` and is replicated from `us-east-1` to `us-west-2`. Cognito
 replicates the client configuration and secret to the replica pool as well.
 The secret's resource policy delegates reads to the account in
@@ -65,8 +66,7 @@ as its Region. Restrict delegation to the role when its ARN is known.
 The secret does not secure CloudFront by itself. The edge integration must
 implement authorization-code + PKCE, protect its cookies, validate tokens
 and authorization on every protected request, and prevent direct origin
-access. It must accept tokens only for the confidential edge client, not the
-public dashboard client. It needs the Cognito domain, issuer, callback URLs, and pool ID as
+access. It needs the Cognito domain, issuer, callback URLs, and pool ID as
 non-secret configuration. Self-registration is enabled and all confirmed
 self-registrations join `DashboardUsers`; requiring that group alone does not
 restrict access to a pre-approved audience. Secret replication is asynchronous;
