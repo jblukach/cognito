@@ -6,9 +6,10 @@ regional SES identities, security logs, and a public dashboard app client.
 
 ## Authentication
 
-- Users can self-register and sign in with an email one-time code. **This is
-  not MFA**: Cognito does not support required MFA with native email-OTP
-  sign-in, so MFA is disabled for this passwordless design.
+- Users can self-register through Managed Login, which requires a password at
+  sign-up, and sign in with a password or an email one-time code. **Neither
+  is MFA**: Cognito does not support required MFA with native email-OTP
+  sign-in, so MFA is disabled for both sign-in methods.
 - Confirmed self-registrations are added to the `DashboardUsers` group. Future
   applications should use their own groups or scopes for authorization rather
   than treating dashboard membership as access to every application.
@@ -91,9 +92,9 @@ Synthesis is not a live deployment test. Before directing users to the pool:
 
 1. Confirm all stacks completed, the `us-west-2` replica is active, and the
    custom domain and certificate are ready.
-2. Test self-registration, confirmation, email-OTP sign-in, and assignment to
-   `DashboardUsers`. Once the dashboard exists, test both callback URLs, token
-   validation, refresh, sign-out, and authorization.
+2. Test self-registration, confirmation, password and email-OTP sign-in, and
+   assignment to `DashboardUsers`. Once the dashboard exists, test both callback
+   URLs, token validation, refresh, sign-out, and authorization.
 3. Check Cognito security and notification logs in both Regions and test SES
    delivery and feedback.
 4. Test automatic failover, replica sign-in and email delivery, and failback.
@@ -101,8 +102,8 @@ Synthesis is not a live deployment test. Before directing users to the pool:
    failover; an override alone does not test detection of an endpoint failure.
 
 Plus threat protection is enabled, but password-specific protections do not
-apply to email-OTP sign-in. Verify the protection and logs available for the
-actual flow. Threat protection is not a rate limiter; consider AWS WAF and
+apply to email-OTP sign-in. Verify the protection and logs available for both
+flows. Threat protection is not a rate limiter; consider AWS WAF and
 operational alarms for a public production identity provider.
 
 ## Regional failover

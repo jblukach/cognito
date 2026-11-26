@@ -26,6 +26,10 @@ LOG_RETENTION = _logs.RetentionDays.THIRTEEN_MONTHS
 
 
 def _key_policy(account: str, regions: list[str]) -> dict:
+    user_pool_arns = [
+        f"arn:{Aws.PARTITION}:cognito-idp:{region}:{account}:userpool/*"
+        for region in regions
+    ]
     statements = [
         {
             "Sid": "AllowAccountAdministration",
@@ -36,10 +40,7 @@ def _key_policy(account: str, regions: list[str]) -> dict:
         }
     ]
 
-    for region in regions:
-        user_pool_arn = (
-            f"arn:{Aws.PARTITION}:cognito-idp:{region}:{account}:userpool/*"
-        )
+    for region, user_pool_arn in zip(regions, user_pool_arns):
         logs_arn = f"arn:{Aws.PARTITION}:logs:{region}:{account}:*"
         cognito_conditions = {
             "ArnLike": {"aws:SourceArn": user_pool_arn},
@@ -51,7 +52,12 @@ def _key_policy(account: str, regions: list[str]) -> dict:
                 {
                     "Sid": f"AllowCognitoUserPoolEncryption{region.replace('-', '')}",
                     "Effect": "Allow",
-                    "Principal": {"Service": "cognito-idp.amazonaws.com"},
+                    "Principal": {
+                        "Service": [
+                            "cognito-idp.amazonaws.com",
+                            "identitystore.amazonaws.com",
+                        ]
+                    },
                     "Action": [
                         "kms:Encrypt",
                         "kms:Decrypt",
@@ -62,14 +68,19 @@ def _key_policy(account: str, regions: list[str]) -> dict:
                     "Condition": {
                         **cognito_conditions,
                         "StringLike": {
-                            "kms:EncryptionContext:aws:cognito-idp:userpool-arn": user_pool_arn
+                            "kms:EncryptionContext:aws:cognito-idp:userpool-arn": user_pool_arns
                         },
                     },
                 },
                 {
                     "Sid": f"AllowCognitoDescribeKey{region.replace('-', '')}",
                     "Effect": "Allow",
-                    "Principal": {"Service": "cognito-idp.amazonaws.com"},
+                    "Principal": {
+                        "Service": [
+                            "cognito-idp.amazonaws.com",
+                            "identitystore.amazonaws.com",
+                        ]
+                    },
                     "Action": "kms:DescribeKey",
                     "Resource": "*",
                     "Condition": cognito_conditions,
@@ -259,7 +270,7 @@ class CognitoIdpStack(Stack):
             ),
             policies=_cognito.CfnUserPool.PoliciesProperty(
                 sign_in_policy=_cognito.CfnUserPool.SignInPolicyProperty(
-                    allowed_first_auth_factors=["EMAIL_OTP"]
+                    allowed_first_auth_factors=["PASSWORD", "EMAIL_OTP"]
                 )
             ),
             email_configuration=_cognito.CfnUserPool.EmailConfigurationProperty(
@@ -381,7 +392,7 @@ class CognitoReplicaKeyStack(Stack):
             self,
             "UserPoolEncryptionKeyReplica",
             primary_key_arn=primary_encryption_key.attr_arn,
-            key_policy=_key_policy(account, [REPLICA_REGION]),
+            key_policy=_key_policy(account, ["us-east-1", REPLICA_REGION]),
             description="Replica KMS key for the 4n6ir Cognito user pool",
         )
         replica_key.apply_removal_policy(RemovalPolicy.RETAIN)

@@ -25,6 +25,22 @@ from cognito.cognito_idp import (
 
 
 class DashboardClientTest(unittest.TestCase):
+    def test_user_pool_allows_password_and_email_otp(self):
+        app = App()
+        stack = CognitoIdpStack(
+            app,
+            "TestIdp",
+            ses_identity_arn="arn:aws:ses:us-east-1:123456789012:identity/auth.4n6ir.com",
+            ses_configuration_set="test-configuration-set",
+            env=Environment(account="123456789012", region="us-east-1"),
+        )
+        pool = Template.from_stack(stack).to_json()["Resources"]["UserPool"]["Properties"]
+        self.assertEqual(
+            set(pool["Policies"]["SignInPolicy"]["AllowedFirstAuthFactors"]),
+            {"PASSWORD", "EMAIL_OTP"},
+        )
+        self.assertEqual(pool["MfaConfiguration"], "OFF")
+
     def test_dashboard_urls_and_refresh_rotation(self):
         app = App()
         stack = CognitoIdpStack(
@@ -47,6 +63,7 @@ class DashboardClientTest(unittest.TestCase):
             client["LogoutURLs"], ["https://4n6ir.com/", "https://www.4n6ir.com/"]
         )
         self.assertNotIn("DefaultRedirectURI", client)
+        self.assertIn("ALLOW_USER_AUTH", client["ExplicitAuthFlows"])
         self.assertNotIn("ALLOW_REFRESH_TOKEN_AUTH", client["ExplicitAuthFlows"])
         self.assertEqual(client["RefreshTokenRotation"]["Feature"], "ENABLED")
 
@@ -78,6 +95,31 @@ class LoggingAndIssuerTest(unittest.TestCase):
             replica_key_stack=replica_key, replica_registration_stack=replica,
             env=replica_env, cross_region_references=True,
         )
+
+        for stack, resource_id, regions in (
+            (primary, "UserPoolEncryptionKey", ("us-east-1", "us-west-2")),
+            (replica_key, "UserPoolEncryptionKeyReplica", ("us-east-1", "us-west-2")),
+        ):
+            key = Template.from_stack(stack).to_json()["Resources"][resource_id]
+            statements = {
+                statement["Sid"]: statement
+                for statement in key["Properties"]["KeyPolicy"]["Statement"]
+            }
+            for region in regions:
+                region_suffix = region.replace("-", "")
+                for prefix in ("AllowCognitoUserPoolEncryption", "AllowCognitoDescribeKey"):
+                    statement = statements[prefix + region_suffix]
+                    self.assertEqual(
+                        set(statement["Principal"]["Service"]),
+                        {"cognito-idp.amazonaws.com", "identitystore.amazonaws.com"},
+                    )
+                    self.assertIn("aws:SourceAccount", statement["Condition"]["StringEquals"])
+                    self.assertIn("aws:SourceArn", statement["Condition"]["ArnLike"])
+                contexts = statements["AllowCognitoUserPoolEncryption" + region_suffix][
+                    "Condition"
+                ]["StringLike"]["kms:EncryptionContext:aws:cognito-idp:userpool-arn"]
+                self.assertIn("cognito-idp:us-east-1:123456789012:userpool/*", json.dumps(contexts))
+                self.assertIn("cognito-idp:us-west-2:123456789012:userpool/*", json.dumps(contexts))
 
         for stack, region in (
             (primary, "us-east-1"),
