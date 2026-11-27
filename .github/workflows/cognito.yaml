@@ -13,9 +13,7 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on:
-      - codebuild-cognito-${{ github.run_id }}-${{ github.run_attempt }}
-      - image:linux-5.0
+    runs-on: codebuild-cognito-${{ github.run_id }}-${{ github.run_attempt }}
     permissions:
       id-token: write
       contents: read
@@ -24,15 +22,12 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
       - uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ secrets.ROLE }}
           aws-region: us-east-1
       - run: npm install -g aws-cdk
-      - run: python -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+      - run: PYENV_VERSION="${PYTHON_313_VERSION:?}" python -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
       - run: .venv/bin/python -m unittest discover -s tests
       - name: Deploy primary and replica registration
         run: >-

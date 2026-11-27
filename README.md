@@ -132,7 +132,8 @@ protect `main` and restrict the role's trust and permissions as appropriate.
 The workflow deploys the primary pool and replica registration first, waits up
 to ten minutes for shared threat-protection settings to match, then deploys
 the regional configuration and clients. The runner needs access to AWS,
-GitHub, npm, and PyPI. It uses an Amazon Linux 2023 CodeBuild image override.
+GitHub, npm, and PyPI. It uses the project's Amazon Linux 2023 image and its
+bundled Python 3.13 runtime.
 Initial SES verification, DNS delegation, bootstrapping, and the checks below
 remain manual prerequisites; a successful workflow does not verify sign-in,
 email delivery, or regional failover.
