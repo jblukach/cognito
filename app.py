@@ -13,6 +13,7 @@ from cognito.cognito_idp import (
     CognitoIdpStack,
     CognitoManagedLoginStack,
     CognitoReplicaConfigurationStack,
+    CognitoReplicaCredentialsParametersStack,
     CognitoReplicaKeyStack,
     CognitoReplicaStack,
 )
@@ -115,6 +116,20 @@ credentials_stack = CognitoCredentialsStack(app, "CognitoCredentialsStack",
     env = cdk.Environment(
         account = account,
         region = 'us-east-1'
+    ),
+    synthesizer = cdk.DefaultStackSynthesizer(
+        qualifier = 'lukach'
+    ),
+    cross_region_references = True
+)
+
+CognitoReplicaCredentialsParametersStack(
+    app, "CognitoReplicaCredentialsParametersStack",
+    credentials = credentials_stack.credentials,
+    replica_credentials_key = replica_configuration_stack.credentials_key,
+    env = cdk.Environment(
+        account = account,
+        region = 'us-west-2'
     ),
     synthesizer = cdk.DefaultStackSynthesizer(
         qualifier = 'lukach'

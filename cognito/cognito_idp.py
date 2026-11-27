@@ -6,6 +6,7 @@ from aws_cdk import (
     Aws,
     CfnOutput,
     Duration,
+    Fn,
     RemovalPolicy,
     SecretValue,
     Stack,
@@ -16,6 +17,7 @@ from aws_cdk import (
     aws_kms as _kms,
     aws_lambda as _lambda,
     aws_logs as _logs,
+    aws_ram as _ram,
     aws_route53 as _route53,
     aws_route53_targets as _route53_targets,
     aws_secretsmanager as _secrets,
@@ -63,6 +65,36 @@ def _credentials_key(scope: Stack) -> _kms.Key:
         )
     )
     return key
+
+
+def _share_credentials_parameters(
+    scope: Stack, secret_arn: str, key_arn: str
+) -> None:
+    domains_account = _ssm.StringParameter.value_for_string_parameter(
+        scope, DOMAINS_ACCOUNT_PARAMETER
+    )
+    parameters = [
+        _ssm.StringParameter(
+            scope,
+            construct_id,
+            parameter_name=name,
+            string_value=value,
+            tier=_ssm.ParameterTier.ADVANCED,
+        )
+        for construct_id, name, value in (
+            ("CredentialsKeyParameter", "/cognito/encrypt", key_arn),
+            ("CredentialsSecretParameter", "/cognito/secret", secret_arn),
+        )
+    ]
+    share = _ram.CfnResourceShare(
+        scope,
+        "CredentialsParameterShare",
+        name="cognito-credentials",
+        principals=[domains_account],
+        resource_arns=[parameter.parameter_arn for parameter in parameters],
+    )
+    for parameter in parameters:
+        share.node.add_dependency(parameter)
 
 
 def _key_policy(account: str, regions: list[str]) -> dict:
@@ -622,10 +654,14 @@ class CognitoCredentialsStack(Stack):
             secret_name="credentials",
             encryption_key=key,
             removal_policy=RemovalPolicy.RETAIN,
-            secret_object_value={
-                "CLIENT_ID": SecretValue.unsafe_plain_text(edge_client.ref),
-                "CLIENT_SECRET": SecretValue.unsafe_plain_text(edge_client.attr_client_secret),
-            },
+            secret_string_value=SecretValue.unsafe_plain_text(
+                self.to_json_string({
+                    "Dashboard": {
+                        "CLIENT_ID": edge_client.ref,
+                        "CLIENT_SECRET": edge_client.attr_client_secret,
+                    },
+                })
+            ),
             replica_regions=[
                 _secrets.ReplicaRegion(
                     region=REPLICA_REGION,
@@ -640,8 +676,33 @@ class CognitoCredentialsStack(Stack):
                 resources=["*"],
             )
         )
+        self.credentials = credentials
+        _share_credentials_parameters(self, credentials.secret_arn, key.key_arn)
         CfnOutput(self, "CredentialsSecretArn", value=credentials.secret_arn)
         CfnOutput(self, "CredentialsKeyArn", value=key.key_arn)
+
+
+class CognitoReplicaCredentialsParametersStack(Stack):
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        *,
+        credentials: _secrets.ISecret,
+        replica_credentials_key: _kms.IKey,
+        **kwargs,
+    ) -> None:
+        super().__init__(scope, construct_id, **kwargs)
+
+        replica_secret_arn = self.format_arn(
+            service="secretsmanager",
+            resource="secret",
+            resource_name=Fn.select(6, Fn.split(":", credentials.secret_arn)),
+            arn_format=ArnFormat.COLON_RESOURCE_NAME,
+        )
+        _share_credentials_parameters(
+            self, replica_secret_arn, replica_credentials_key.key_arn
+        )
 
 
 class CognitoManagedLoginStack(Stack):

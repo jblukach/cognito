@@ -20,6 +20,7 @@ from cognito.cognito_idp import (
     CognitoIdpStack,
     CognitoManagedLoginStack,
     CognitoReplicaConfigurationStack,
+    CognitoReplicaCredentialsParametersStack,
     CognitoReplicaKeyStack,
     CognitoReplicaStack,
 )
@@ -151,6 +152,12 @@ class LoggingAndIssuerTest(unittest.TestCase):
             replica_credentials_key=replica_configuration.credentials_key,
             env=primary_env, cross_region_references=True,
         )
+        replica_parameters = CognitoReplicaCredentialsParametersStack(
+            app, "ReplicaCredentialsParameters",
+            credentials=credentials.credentials,
+            replica_credentials_key=replica_configuration.credentials_key,
+            env=replica_env, cross_region_references=True,
+        )
         credential_template = Template.from_stack(credentials).to_json()
         credential_resources = credential_template["Resources"]
         clients = Template.from_stack(credentials).find_resources(
@@ -180,10 +187,17 @@ class LoggingAndIssuerTest(unittest.TestCase):
         )["Properties"]
         self.assertEqual(secret["Name"], "credentials")
         self.assertEqual(secret["ReplicaRegions"][0]["Region"], "us-west-2")
-        secret_string = json.dumps(secret["SecretString"])
-        self.assertIn("CLIENT_ID", secret_string)
-        self.assertIn("CLIENT_SECRET", secret_string)
-        self.assertIn('"Fn::GetAtt": ["EdgeAppClient", "ClientSecret"]', secret_string)
+        secret_parts = secret["SecretString"]["Fn::Join"][1]
+        self.assertEqual(
+            json.loads("".join(
+                part if isinstance(part, str) else (
+                    "client-id" if part == {"Ref": "EdgeAppClient"} else "client-secret"
+                )
+                for part in secret_parts
+            )),
+            {"Dashboard": {"CLIENT_ID": "client-id", "CLIENT_SECRET": "client-secret"}},
+        )
+        self.assertIn({"Fn::GetAtt": ["EdgeAppClient", "ClientSecret"]}, secret_parts)
         self.assertNotIn("ClientSecret", json.dumps(credential_template.get("Outputs", {})))
         for stack, region in ((credentials, "us-east-1"), (replica_configuration, "us-west-2")):
             keys = Template.from_stack(stack).find_resources("AWS::KMS::Key")
@@ -197,6 +211,62 @@ class LoggingAndIssuerTest(unittest.TestCase):
         self.assertEqual(len(policies), 1)
         self.assertIn("secretsmanager:GetSecretValue", json.dumps(policies))
         self.assertIn("accountdomains", json.dumps(policies))
+        for stack, region in (
+            (credentials, "us-east-1"),
+            (replica_parameters, "us-west-2"),
+        ):
+            template = Template.from_stack(stack).to_json()
+            domains_parameter = next(
+                name for name, value in template["Parameters"].items()
+                if value.get("Default") == "/account/domains"
+            )
+            parameters = {
+                resource["Properties"]["Name"]: (name, resource["Properties"])
+                for name, resource in template["Resources"].items()
+                if resource["Type"] == "AWS::SSM::Parameter"
+            }
+            self.assertEqual(set(parameters), {"/cognito/encrypt", "/cognito/secret"})
+            for _, parameter in parameters.values():
+                self.assertEqual(parameter["Tier"], "Advanced")
+                self.assertEqual(parameter["Type"], "String")
+            share = next(
+                resource for resource in template["Resources"].values()
+                if resource["Type"] == "AWS::RAM::ResourceShare"
+            )
+            self.assertEqual(share["Properties"]["Principals"], [{"Ref": domains_parameter}])
+            self.assertEqual(set(share["DependsOn"]), {item[0] for item in parameters.values()})
+            self.assertEqual(len(share["Properties"]["ResourceArns"]), 2)
+            for parameter_id, _ in parameters.values():
+                self.assertIn(json.dumps({"Ref": parameter_id}), json.dumps(share["Properties"]["ResourceArns"]))
+            self.assertIn(region, json.dumps(share["Properties"]["ResourceArns"]))
+        primary_parameters = {
+            resource["Properties"]["Name"]: resource["Properties"]["Value"]
+            for resource in credential_resources.values()
+            if resource["Type"] == "AWS::SSM::Parameter"
+        }
+        secret_id = next(
+            name for name, resource in credential_resources.items()
+            if resource["Type"] == "AWS::SecretsManager::Secret"
+        )
+        key_id = next(
+            name for name, resource in credential_resources.items()
+            if resource["Type"] == "AWS::KMS::Key" and name.startswith("CredentialsKey")
+        )
+        self.assertEqual(primary_parameters["/cognito/secret"], {"Ref": secret_id})
+        self.assertEqual(primary_parameters["/cognito/encrypt"], {"Fn::GetAtt": [key_id, "Arn"]})
+        replica_template = Template.from_stack(replica_parameters).to_json()
+        replica_values = {
+            resource["Properties"]["Name"]: resource["Properties"]["Value"]
+            for resource in replica_template["Resources"].values()
+            if resource["Type"] == "AWS::SSM::Parameter"
+        }
+        replica_secret_value = json.dumps(replica_values["/cognito/secret"])
+        self.assertIn(":secretsmanager:us-west-2:", replica_secret_value)
+        self.assertIn('"Fn::Select": [6, {"Fn::Split": [":"', replica_secret_value)
+        self.assertIn(secret_id, replica_secret_value)
+        self.assertIn("CredentialsKey", json.dumps(replica_values["/cognito/encrypt"]))
+        self.assertIn(credentials, replica_parameters.dependencies)
+        self.assertIn(replica_configuration, replica_parameters.dependencies)
         for stack, resource_id, regions in (
             (primary, "UserPoolEncryptionKey", ("us-east-1", "us-west-2")),
             (replica_key, "UserPoolEncryptionKeyReplica", ("us-east-1", "us-west-2")),

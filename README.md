@@ -54,17 +54,34 @@ the OAuth token endpoint; never expose the secret in a browser. Use the token
 endpoint to refresh rotated tokens; `REFRESH_TOKEN_AUTH` is not enabled. Tokens
 from both Regions use the updated issuer for the primary Region.
 
-The `credentials` Secrets Manager secret contains the client's `CLIENT_ID` and
-`CLIENT_SECRET` and is replicated from `us-east-1` to `us-west-2`. Cognito
-replicates the client configuration and secret to the replica pool as well.
-The secret's resource policy delegates reads to the account in
-`/account/domains`; each Region's customer-managed KMS key delegates decrypt
-to the account from that Region's parameter. Both parameters must contain
-the same account ID. The destination account must also grant its edge
-execution role `secretsmanager:GetSecretValue` and `kms:Decrypt` for the
-regional secret and key ARNs. The stacks output those ARNs, except that the
-replica secret ARN has the same suffix as the primary ARN with `us-west-2`
-as its Region. Restrict delegation to the role when its ARN is known.
+The replicated `credentials` Secrets Manager secret contains project-labeled
+credentials in the form
+`{"Dashboard":{"CLIENT_ID":"...","CLIENT_SECRET":"..."}}`. The Dashboard
+integration must select `Dashboard` before reading these fields. Add future
+project entries to the CDK-managed secret; manual changes may be overwritten
+by stack updates. All projects in this secret are readable together, not
+independently. Cognito replicates the client configuration and secret to the
+replica pool as well.
+
+Each Region has two advanced String parameters: `/cognito/secret` contains the
+regional secret ARN and `/cognito/encrypt` contains the regional KMS key ARN.
+Each regional RAM share grants access to those parameters only to the account
+in that Region's `/account/domains` parameter. Both account parameters must
+contain the same account ID. The secret's resource policy and the regional
+KMS key policies separately delegate secret reads and decrypt to that account.
+The destination account must grant its edge execution role `ssm:GetParameter`
+for the shared parameter ARNs, `secretsmanager:GetSecretValue` for the
+regional secret ARNs, and `kms:Decrypt` for the regional key ARNs. Discover
+shared parameters with `aws ssm describe-parameters --shared` in each Region;
+cross-account `GetParameter` requires the full parameter ARN, not its name.
+Accept the RAM invitations if required by the organization configuration.
+Restrict secret and key delegation to the role when its ARN is known.
+
+This changes the existing secret's JSON shape; update any consumer to read
+`Dashboard` before deploying the change, and coordinate rollout to avoid
+breaking sign-in. There is no Dashboard authentication implementation in this
+repository. Advanced parameters and replicated secrets incur regional storage
+and API charges.
 
 The secret does not secure CloudFront by itself. The edge integration must
 implement authorization-code + PKCE, protect its cookies, validate tokens
@@ -140,15 +157,18 @@ domain prerequisite. Then deploy:
 
 ```sh
 cdk deploy --profile cog CognitoIdpStack CognitoReplicaKeyStack CognitoReplicaStack \
-  CognitoReplicaConfigurationStack CognitoCredentialsStack CognitoManagedLoginStack
+  CognitoReplicaConfigurationStack CognitoCredentialsStack \
+  CognitoReplicaCredentialsParametersStack CognitoManagedLoginStack
 ```
 
 The replica registration stack is in `us-east-1`; its KMS replica key and
 regional configuration are in `us-west-2`. Before deployment, confirm that
 the `/account/domains` SSM parameter exists in both Regions and contains the
 same destination account ID. The credentials stack depends on the replica's
-regional key; Managed Login depends on the credentials and replica
-configuration stacks.
+regional key; the replica parameter stack depends on the credentials stack
+and regional key. Managed Login depends on the credentials and replica
+configuration stacks. Ensure the named `/cognito/*` parameters do not already
+belong to another stack before deployment.
 
 ### 3. Validate before production
 
@@ -169,10 +189,12 @@ Synthesis is not a live deployment test. Before directing users to the pool:
 5. Test TLS 1.3 client compatibility, session listing and revocation, and
    reauthentication after the SSO and refresh-token limits. Test that the
    verification template also reads correctly for password resets.
-6. After the Domains account grants its edge role permissions, test reading
-   the confidential client secret in both Regions without logging its value,
-   and confirm the replica is in sync. Test the edge authentication, callback,
-   authorization and origin restrictions before exposing the dashboard.
+6. Confirm both regional RAM shares and the shared parameter values. After the
+   Domains account grants its edge role permissions, test reading the
+   confidential client secret in both Regions without logging its value,
+   confirm the replica is in sync, and test regional read failover. Test the
+   edge authentication, callback, authorization and origin restrictions
+   before exposing the dashboard.
 
 Plus threat protection is enabled. Risk-based MFA responses require optional
 MFA and are not used with required MFA. Verify effective risk actions and logs
