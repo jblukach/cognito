@@ -750,7 +750,10 @@ class SesDomainTest(unittest.TestCase):
                 principal = statement.get("Principal", {})
                 service = principal.get("Service")
                 if isinstance(service, list):
-                    has_ses_principal = "ses.amazonaws.com" in service
+                    has_ses_principal = any(
+                        isinstance(item, str) and item == "ses.amazonaws.com"
+                        for item in service
+                    )
                 else:
                     has_ses_principal = service == "ses.amazonaws.com"
 
