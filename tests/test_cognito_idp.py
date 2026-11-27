@@ -160,6 +160,85 @@ class LoggingAndIssuerTest(unittest.TestCase):
             replica_credentials_key=replica_configuration.credentials_key,
             env=replica_env, cross_region_references=True,
         )
+        primary_resources = Template.from_stack(primary).to_json()["Resources"]
+        primary_risk = primary_resources["UserPoolRiskConfiguration"]["Properties"]
+        self.assertEqual(primary_risk["ClientId"], "ALL")
+        self.assertEqual(
+            primary_risk["CompromisedCredentialsRiskConfiguration"],
+            {
+                "Actions": {"EventAction": "BLOCK"},
+                "EventFilter": ["SIGN_IN", "SIGN_UP", "PASSWORD_CHANGE"],
+            },
+        )
+        takeover = primary_risk["AccountTakeoverRiskConfiguration"]
+        self.assertEqual(
+            takeover["Actions"],
+            {
+                "LowAction": {"EventAction": "NO_ACTION", "Notify": False},
+                "MediumAction": {"EventAction": "NO_ACTION", "Notify": False},
+                "HighAction": {"EventAction": "BLOCK", "Notify": True},
+            },
+        )
+        self.assertEqual(
+            takeover["NotifyConfiguration"]["SourceArn"],
+            "arn:aws:ses:us-east-1:123456789012:identity/auth.4n6ir.com",
+        )
+        replica_resources = Template.from_stack(replica_configuration).to_json()["Resources"]
+        self.assertFalse(any(
+            resource["Type"] == "AWS::Cognito::UserPoolRiskConfigurationAttachment"
+            for resource in replica_resources.values()
+        ))
+        risk_resource = next(
+            resource for name, resource in replica_resources.items()
+            if name.startswith("UserPoolRiskConfiguration")
+            and resource["Type"] == "Custom::AWS"
+        )
+        self.assertIn("UserPoolReplicaConfiguration", risk_resource["DependsOn"])
+        properties = risk_resource["Properties"]
+        self.assertNotIn("Delete", properties)
+        calls = []
+        for operation in ("Create", "Update"):
+            parts = properties[operation]["Fn::Join"][1]
+            call = json.loads("".join(
+                part if isinstance(part, str) else "pool-id" for part in parts
+            ))
+            self.assertEqual(call["service"], "@aws-sdk/client-cognito-identity-provider")
+            self.assertEqual(call["action"], "setRiskConfiguration")
+            self.assertNotIn("ClientId", call["parameters"])
+            calls.append(call)
+        self.assertEqual(calls[0], calls[1])
+        replica_risk = calls[0]["parameters"]
+        self.assertEqual(
+            replica_risk["CompromisedCredentialsRiskConfiguration"],
+            primary_risk["CompromisedCredentialsRiskConfiguration"],
+        )
+        replica_takeover = replica_risk["AccountTakeoverRiskConfiguration"]
+        self.assertEqual(replica_takeover["Actions"], takeover["Actions"])
+        replica_notification = replica_takeover["NotifyConfiguration"].copy()
+        self.assertEqual(
+            replica_notification.pop("SourceArn"),
+            "arn:aws:ses:us-west-2:123456789012:identity/auth.4n6ir.com",
+        )
+        self.assertEqual(
+            replica_notification,
+            {key: value for key, value in takeover["NotifyConfiguration"].items()
+             if key != "SourceArn"},
+        )
+        policy = next(
+            resource for name, resource in replica_resources.items()
+            if name.startswith("UserPoolRiskConfigurationCustomResourcePolicy")
+            and resource["Type"] == "AWS::IAM::Policy"
+        )["Properties"]["PolicyDocument"]["Statement"]
+        decrypt = next(statement for statement in policy if statement["Action"] == "kms:Decrypt")
+        self.assertNotEqual(decrypt["Resource"], "*")
+        self.assertEqual(
+            decrypt["Condition"]["StringEquals"]["kms:ViaService"],
+            {"Fn::Join": ["", ["cognito-idp.us-west-2.", {"Ref": "AWS::URLSuffix"}]]},
+        )
+        self.assertIn(
+            "kms:EncryptionContext:aws:cognito-idp:userpool-arn",
+            decrypt["Condition"]["StringLike"],
+        )
         credential_template = Template.from_stack(credentials).to_json()
         credential_resources = credential_template["Resources"]
         clients = Template.from_stack(credentials).find_resources(

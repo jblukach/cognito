@@ -5,6 +5,7 @@ from aws_cdk import (
     ArnFormat,
     Aws,
     CfnOutput,
+    CfnResource,
     Duration,
     Fn,
     RemovalPolicy,
@@ -22,6 +23,7 @@ from aws_cdk import (
     aws_route53_targets as _route53_targets,
     aws_secretsmanager as _secrets,
     aws_ssm as _ssm,
+    custom_resources as _custom_resources,
 )
 from constructs import Construct
 
@@ -266,6 +268,36 @@ def _add_log_delivery(
     return log_group, log_delivery
 
 
+def _risk_configuration(ses_identity_arn: str) -> dict:
+    return {
+        "CompromisedCredentialsRiskConfiguration": {
+            "Actions": {"EventAction": "BLOCK"},
+            "EventFilter": ["SIGN_IN", "SIGN_UP", "PASSWORD_CHANGE"],
+        },
+        "AccountTakeoverRiskConfiguration": {
+            "Actions": {
+                "LowAction": {"EventAction": "NO_ACTION", "Notify": False},
+                "MediumAction": {"EventAction": "NO_ACTION", "Notify": False},
+                "HighAction": {"EventAction": "BLOCK", "Notify": True},
+            },
+            "NotifyConfiguration": {
+                "SourceArn": ses_identity_arn,
+                "From": EMAIL_FROM_ADDRESS,
+                "ReplyTo": EMAIL_REPLY_TO_ADDRESS,
+                "BlockEmail": {
+                    "Subject": "A 4n6ir sign-in attempt was blocked",
+                    "TextBody": (
+                        "We blocked a sign-in attempt because it appeared risky. "
+                        "If this was you, please contact hello@4n6ir.com for help. "
+                        "If it wasn't you, reset your password and contact us. "
+                        "Never share your password or verification codes."
+                    ),
+                },
+            },
+        },
+    }
+
+
 class CognitoIdpStack(Stack):
     def __init__(
         self,
@@ -455,6 +487,17 @@ class CognitoIdpStack(Stack):
             )
         )
 
+        CfnResource(
+            self,
+            "UserPoolRiskConfiguration",
+            type="AWS::Cognito::UserPoolRiskConfigurationAttachment",
+            properties={
+                "UserPoolId": user_pool.ref,
+                "ClientId": "ALL",
+                **_risk_configuration(ses_identity_arn),
+            },
+        )
+
         log_group, _ = _add_log_delivery(
             self, user_pool.ref, "us-east-1", "Primary"
         )
@@ -569,6 +612,59 @@ class CognitoReplicaConfigurationStack(Stack):
                 },
             )
         )
+
+        risk_call = _custom_resources.AwsSdkCall(
+            service="@aws-sdk/client-cognito-identity-provider",
+            action="setRiskConfiguration",
+            parameters={
+                "UserPoolId": primary_user_pool.ref,
+                **_risk_configuration(ses_identity_arn),
+            },
+            physical_resource_id=_custom_resources.PhysicalResourceId.of(
+                f"{primary_user_pool.ref}-replica-risk"
+            ),
+            output_paths=["RiskConfiguration.UserPoolId"],
+        )
+        risk_configuration = _custom_resources.AwsCustomResource(
+            self,
+            "UserPoolRiskConfiguration",
+            on_create=risk_call,
+            on_update=risk_call,
+            policy=_custom_resources.AwsCustomResourcePolicy.from_statements([
+                _iam.PolicyStatement(
+                    actions=["cognito-idp:SetRiskConfiguration"],
+                    resources=[self.format_arn(
+                        service="cognito-idp",
+                        resource="userpool",
+                        resource_name=primary_user_pool.ref,
+                        arn_format=ArnFormat.SLASH_RESOURCE_NAME,
+                    )],
+                ),
+                _iam.PolicyStatement(
+                    actions=["kms:Decrypt"],
+                    resources=[replica_key_stack.replica_key.attr_arn],
+                    conditions={
+                        "StringEquals": {
+                            "kms:ViaService": f"cognito-idp.{self.region}.{Aws.URL_SUFFIX}",
+                        },
+                        "StringLike": {
+                            "kms:EncryptionContext:aws:cognito-idp:userpool-arn": [
+                                self.format_arn(
+                                    service="cognito-idp",
+                                    region=region,
+                                    resource="userpool",
+                                    resource_name=primary_user_pool.ref,
+                                    arn_format=ArnFormat.SLASH_RESOURCE_NAME,
+                                )
+                                for region in (Stack.of(primary_user_pool).region, self.region)
+                            ],
+                        },
+                    },
+                ),
+            ]),
+            install_latest_aws_sdk=False,
+        )
+        risk_configuration.node.add_dependency(regional_configuration)
 
         log_group, log_delivery = _add_log_delivery(
             self, primary_user_pool.ref, REPLICA_REGION, "Replica"

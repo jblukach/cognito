@@ -163,11 +163,33 @@ subscription confirmation.
 ### 2. Deploy Cognito
 
 Ensure `4n6ir.com` has a publicly resolvable A record for the Cognito custom
-domain prerequisite. Then deploy:
+domain prerequisite. Deploy the primary pool and register the replica first:
 
 ```sh
-cdk deploy --profile cog CognitoIdpStack CognitoReplicaKeyStack CognitoReplicaStack \
-  CognitoReplicaConfigurationStack CognitoCredentialsStack \
+cdk deploy --profile cog CognitoIdpStack CognitoReplicaKeyStack CognitoReplicaStack
+```
+
+Wait for the primary risk settings to replicate to the secondary before deploying
+its regional notification configuration. Compare the output of the following
+commands using the `UserPoolId` stack output; the risk actions and templates
+must match, although the regional SES source ARN can differ:
+
+```sh
+aws cognito-idp describe-risk-configuration --profile cog --region us-east-1 \
+  --user-pool-id <user-pool-id>
+aws cognito-idp describe-risk-configuration --profile cog --region us-west-2 \
+  --user-pool-id <user-pool-id>
+```
+
+Replication is eventually consistent. Repeat the comparison before subsequent
+updates to risk actions or email templates; the replica only accepts regional
+changes to the notification source ARN and sender. The replica stack uses a
+custom resource to update the existing replicated configuration, rather than
+trying to create another risk attachment. Removing the custom resource does not
+reset the replica risk settings. Then deploy:
+
+```sh
+cdk deploy --profile cog CognitoReplicaConfigurationStack CognitoCredentialsStack \
   CognitoReplicaCredentialsParametersStack CognitoManagedLoginStack
 ```
 
@@ -208,12 +230,24 @@ Synthesis is not a live deployment test. Before directing users to the pool:
    edge authentication, callback, authorization and origin restrictions
    before exposing the dashboard.
 
-Plus threat protection is enabled. Risk-based MFA responses require optional
-MFA and are not used with required MFA. Verify effective risk actions and logs
-for both flows; threat protection is not a rate limiter. Consider AWS WAF and
-operational alarms for a public production identity provider. Managed Login
-automatically includes device information in advanced security logs; remembered
-devices are separate and can bypass MFA, so they are not enabled here.
+Plus threat protection blocks compromised passwords at sign-in, sign-up, and
+password change. Low- and medium-risk sign-ins are allowed; high-risk sign-ins
+are blocked and the user is emailed with recovery guidance. The pool-wide
+settings apply only to clients without their own risk configuration. Check for
+client-level overrides and verify the effective configuration in both Regions.
+Risk-based MFA requires optional MFA and is not used with required MFA.
+
+Review risk events and false positives before deploying enforcement changes;
+AWS recommends at least two weeks of audit data. Switching an enforced pool
+to audit mode temporarily removes its automatic protections. Test password
+reset, blocked-sign-in notifications, and SES delivery in both Regions. A
+blocked compromised password can require a password reset; password resets
+are unavailable in the replica during failover. AWS also documents that TOTP
+MFA is not supported in secondary replicas, so test and plan access accordingly.
+Threat protection is not a rate limiter. Consider AWS WAF and operational
+alarms for a public production identity provider. Managed Login automatically
+includes device information in security logs; remembered devices are separate
+and can bypass MFA, so they are not enabled here.
 
 ## Point-in-time recovery
 
