@@ -730,12 +730,42 @@ class SesDomainTest(unittest.TestCase):
             self.assertEqual(subscriptions[0]["Protocol"], "email")
             self.assertEqual(subscriptions[0]["Endpoint"], "hello@4n6ir.com")
             self.assertEqual(subscriptions[0]["TopicArn"], event["SnsDestination"]["TopicARN"])
-            self.assertTrue(any(
-                resource["Type"] == "AWS::SNS::TopicPolicy"
-                and "ses.amazonaws.com" in json.dumps(resource["Properties"])
-                and "configuration-set/" in json.dumps(resource["Properties"])
+            topic_policies = [
+                resource["Properties"]
                 for resource in resources.values()
-            ))
+                if resource["Type"] == "AWS::SNS::TopicPolicy"
+            ]
+            self.assertTrue(topic_policies)
+
+            def _contains_configuration_set(value):
+                if isinstance(value, str):
+                    return "configuration-set/" in value
+                if isinstance(value, list):
+                    return any(_contains_configuration_set(item) for item in value)
+                if isinstance(value, dict):
+                    return any(_contains_configuration_set(item) for item in value.values())
+                return False
+
+            def _statement_matches(statement):
+                principal = statement.get("Principal", {})
+                service = principal.get("Service")
+                if isinstance(service, list):
+                    has_ses_principal = "ses.amazonaws.com" in service
+                else:
+                    has_ses_principal = service == "ses.amazonaws.com"
+
+                condition = statement.get("Condition", {})
+                has_configuration_set = _contains_configuration_set(condition)
+
+                return has_ses_principal and has_configuration_set
+
+            self.assertTrue(
+                any(
+                    _statement_matches(statement)
+                    for policy in topic_policies
+                    for statement in policy.get("PolicyDocument", {}).get("Statement", [])
+                )
+            )
 
 
 if __name__ == "__main__":
