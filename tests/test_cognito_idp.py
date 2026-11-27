@@ -28,6 +28,23 @@ from cognito.cognito_idp import (
 
 
 class DeploymentRoleTest(unittest.TestCase):
+    def test_role_trusts_immutable_github_repository_identity(self):
+        stack = CognitoStack(
+            App(), "Deployment", env=Environment(account="123456789012", region="us-east-2")
+        )
+        roles = Template.from_stack(stack).find_resources("AWS::IAM::Role")
+        statements = [
+            statement
+            for role in roles.values()
+            for statement in role["Properties"]["AssumeRolePolicyDocument"]["Statement"]
+            if statement["Action"] == "sts:AssumeRoleWithWebIdentity"
+        ]
+        self.assertEqual(len(statements), 1)
+        self.assertEqual(
+            statements[0]["Condition"]["StringLike"]["token.actions.githubusercontent.com:sub"],
+            "repo:jblukach@84751182/cognito@1471137286:*",
+        )
+
     def test_risk_reads_can_decrypt_only_through_regional_cognito(self):
         stack = CognitoStack(
             App(), "Deployment", env=Environment(account="123456789012", region="us-east-2")

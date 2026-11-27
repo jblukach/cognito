@@ -126,8 +126,9 @@ monthly, using the existing `cognito` CodeBuild runner in `us-east-2`.
 Set the repository Actions secret `ROLE` to the ARN of the GitHub OIDC role
 created by `CognitoStack`. Deploy `CognitoStack` once with an administrator
 before enabling the workflow so the role has permission to read the encrypted
-risk configuration. The role currently trusts all refs in this repository;
-protect `main` and restrict the role's trust and permissions as appropriate.
+risk configuration. The role trusts all refs in this repository using GitHub's
+immutable owner and repository IDs; protect `main` and restrict the role's
+trust and permissions as appropriate.
 
 The workflow deploys the primary pool and replica registration first, waits up
 to ten minutes for shared threat-protection settings to match, then deploys

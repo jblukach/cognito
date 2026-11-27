@@ -25,7 +25,7 @@ class CognitoStack(Stack):
             assumed_by = _iam.WebIdentityPrincipal(provider.open_id_connect_provider_arn).with_conditions(
                 {
                     "StringLike": {
-                        "token.actions.githubusercontent.com:sub": "repo:jblukach/cognito:*"
+                        "token.actions.githubusercontent.com:sub": "repo:jblukach@84751182/cognito@1471137286:*"
                     }
                 }
             )
