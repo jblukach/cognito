@@ -1,0 +1,81 @@
+name: cognito
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '0 2 1 * *'
+
+concurrency:
+  group: cognito-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on:
+      - codebuild-cognito-${{ github.run_id }}-${{ github.run_attempt }}
+      - image:linux-5.0
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.ROLE }}
+          aws-region: us-east-1
+      - run: npm install -g aws-cdk
+      - run: python -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+      - run: .venv/bin/python -m unittest discover -s tests
+      - name: Deploy primary and replica registration
+        run: >-
+          cdk deploy --require-approval never
+          CognitoStack CognitoReplicaSesStack CognitoDomainStack
+          CognitoIdpStack CognitoReplicaKeyStack CognitoReplicaStack
+      - name: Wait for replicated threat protection settings
+        shell: bash
+        run: |
+          pool_id=$(aws cloudformation describe-stacks --region us-east-1 \
+            --stack-name CognitoIdpStack \
+            --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue | [0]" \
+            --output text)
+          if [[ -z "$pool_id" || "$pool_id" == "None" ]]; then
+            echo "CognitoIdpStack did not return a user pool ID" >&2
+            exit 1
+          fi
+          filter='.RiskConfiguration | {
+            CompromisedCredentialsRiskConfiguration,
+            RiskExceptionConfiguration,
+            AccountTakeoverRiskConfiguration: (.AccountTakeoverRiskConfiguration | {
+              Actions,
+              NotifyConfiguration: (.NotifyConfiguration | del(.From, .SourceArn))
+            })
+          }'
+          for attempt in {1..60}; do
+            primary=$(aws cognito-idp describe-risk-configuration \
+              --region us-east-1 --user-pool-id "$pool_id" | jq -cS "$filter")
+            replica=$(aws cognito-idp describe-risk-configuration \
+              --region us-west-2 --user-pool-id "$pool_id" | jq -cS "$filter")
+            if [[ "$primary" == "$replica" ]] && \
+              jq -e '.AccountTakeoverRiskConfiguration.Actions != null and
+                .CompromisedCredentialsRiskConfiguration.Actions != null' \
+                <<< "$primary" > /dev/null; then
+              exit 0
+            fi
+            echo "Waiting for replica risk settings ($attempt/60)"
+            sleep 10
+          done
+          echo "Replica risk settings did not converge" >&2
+          exit 1
+      - name: Deploy regional configuration and clients
+        run: >-
+          cdk deploy --require-approval never
+          CognitoReplicaConfigurationStack CognitoCredentialsStack
+          CognitoReplicaCredentialsParametersStack CognitoManagedLoginStack

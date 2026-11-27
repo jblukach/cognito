@@ -119,6 +119,24 @@ warning, but still diffs all stacks when none are specified. Bootstrap
 `us-east-1` and `us-west-2` with the `lukach` qualifier if they are not
 already bootstrapped.
 
+### Continuous deployment
+
+The GitHub Actions workflow runs tests and deploys on pushes to `main` and
+monthly, using the existing `cognito` CodeBuild runner in `us-east-2`.
+Set the repository Actions secret `ROLE` to the ARN of the GitHub OIDC role
+created by `CognitoStack`. Deploy `CognitoStack` once with an administrator
+before enabling the workflow so the role has permission to read the encrypted
+risk configuration. The role currently trusts all refs in this repository;
+protect `main` and restrict the role's trust and permissions as appropriate.
+
+The workflow deploys the primary pool and replica registration first, waits up
+to ten minutes for shared threat-protection settings to match, then deploys
+the regional configuration and clients. The runner needs access to AWS,
+GitHub, npm, and PyPI. It uses an Amazon Linux 2023 CodeBuild image override.
+Initial SES verification, DNS delegation, bootstrapping, and the checks below
+remain manual prerequisites; a successful workflow does not verify sign-in,
+email delivery, or regional failover.
+
 ### 1. Deploy and verify email
 
 ```sh

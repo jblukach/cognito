@@ -15,6 +15,7 @@ from aws_cdk import (
 from aws_cdk.assertions import Template
 
 from cognito.cognito_domain import CognitoDomainStack, CognitoReplicaSesStack
+from cognito.cognito_stack import CognitoStack
 from cognito.cognito_idp import (
     CognitoCredentialsStack,
     CognitoIdpStack,
@@ -24,6 +25,33 @@ from cognito.cognito_idp import (
     CognitoReplicaKeyStack,
     CognitoReplicaStack,
 )
+
+
+class DeploymentRoleTest(unittest.TestCase):
+    def test_risk_reads_can_decrypt_only_through_regional_cognito(self):
+        stack = CognitoStack(
+            App(), "Deployment", env=Environment(account="123456789012", region="us-east-2")
+        )
+        policies = Template.from_stack(stack).find_resources("AWS::IAM::Policy")
+        statements = [
+            statement
+            for policy in policies.values()
+            for statement in policy["Properties"]["PolicyDocument"]["Statement"]
+            if statement["Action"] == "kms:Decrypt"
+        ]
+        self.assertEqual(len(statements), 2)
+        for statement, region in zip(statements, ("us-east-1", "us-west-2")):
+            self.assertIn(f":kms:{region}:123456789012:key/mrk-*", json.dumps(statement["Resource"]))
+            self.assertIn(
+                f"cognito-idp.{region}.",
+                json.dumps(statement["Condition"]["StringEquals"]["kms:ViaService"]),
+            )
+            context = statement["Condition"]["StringLike"][
+                "kms:EncryptionContext:aws:cognito-idp:userpool-arn"
+            ]
+            self.assertEqual(len(context), 2)
+            for pool_region, arn in zip(("us-east-1", "us-west-2"), context):
+                self.assertIn(f":cognito-idp:{pool_region}:123456789012:userpool/*", json.dumps(arn))
 
 
 class CognitoClientTest(unittest.TestCase):

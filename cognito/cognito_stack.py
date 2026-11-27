@@ -137,6 +137,27 @@ class CognitoStack(Stack):
             )
         )
 
+        for region in ('us-east-1', 'us-west-2'):
+            github.add_to_policy(
+                _iam.PolicyStatement(
+                    actions=['kms:Decrypt'],
+                    resources=[
+                        f'arn:{self.partition}:kms:{region}:{account}:key/mrk-*'
+                    ],
+                    conditions={
+                        "StringEquals": {
+                            "kms:ViaService": f"cognito-idp.{region}.{self.url_suffix}"
+                        },
+                        "StringLike": {
+                            "kms:EncryptionContext:aws:cognito-idp:userpool-arn": [
+                                f'arn:{self.partition}:cognito-idp:{pool_region}:{account}:userpool/*'
+                                for pool_region in ('us-east-1', 'us-west-2')
+                            ]
+                        },
+                    },
+                )
+            )
+
         github.add_to_policy(
             _iam.PolicyStatement(
                 actions = [
