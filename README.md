@@ -63,8 +63,10 @@ by stack updates. All projects in this secret are readable together, not
 independently. Cognito replicates the client configuration and secret to the
 replica pool as well.
 
-Each Region has two advanced String parameters: `/cognito/secret` contains the
-regional secret ARN and `/cognito/encrypt` contains the regional KMS key ARN.
+Each Region has three advanced String parameters: `/cognito/secret` contains the
+regional secret ARN, `/cognito/encrypt` contains the regional KMS key ARN, and
+the non-secret `/cognito/issuer` contains the primary pool's `UpdatedIssuer`.
+The issuer is identical in both Regions, including during failover.
 Each regional RAM share grants access to those parameters only to the account
 in that Region's `/account/domains` parameter. Both account parameters must
 contain the same account ID. The secret's resource policy and the regional
@@ -76,6 +78,14 @@ shared parameters with `aws ssm describe-parameters --shared` in each Region;
 cross-account `GetParameter` requires the full parameter ARN, not its name.
 Accept the RAM invitations if required by the organization configuration.
 Restrict secret and key delegation to the role when its ARN is known.
+
+The Domains Lambda should discover `/cognito/issuer` using the same regional
+fallback approach as the credentials: read its full shared parameter ARN in
+`us-east-1`, falling back to the ARN in `us-west-2` if the primary regional read
+fails. Grant its execution role `ssm:GetParameter` for both issuer parameter
+ARNs. Use the returned value for token issuer validation; do not switch to a
+replica-specific issuer during failover. No secret read or KMS decrypt is needed
+to retrieve the issuer.
 
 This changes the existing secret's JSON shape; update any consumer to read
 `Dashboard` before deploying the change, and coordinate rollout to avoid
@@ -192,7 +202,9 @@ Synthesis is not a live deployment test. Before directing users to the pool:
 6. Confirm both regional RAM shares and the shared parameter values. After the
    Domains account grants its edge role permissions, test reading the
    confidential client secret in both Regions without logging its value,
-   confirm the replica is in sync, and test regional read failover. Test the
+   confirm the replica is in sync, and test regional read failover. Verify that
+   both `/cognito/issuer` parameters equal the primary `UpdatedIssuer` output
+   and that the Domains Lambda can read either shared issuer parameter. Test the
    edge authentication, callback, authorization and origin restrictions
    before exposing the dashboard.
 

@@ -68,7 +68,7 @@ def _credentials_key(scope: Stack) -> _kms.Key:
 
 
 def _share_credentials_parameters(
-    scope: Stack, secret_arn: str, key_arn: str
+    scope: Stack, secret_arn: str, key_arn: str, issuer: str
 ) -> None:
     domains_account = _ssm.StringParameter.value_for_string_parameter(
         scope, DOMAINS_ACCOUNT_PARAMETER
@@ -84,6 +84,7 @@ def _share_credentials_parameters(
         for construct_id, name, value in (
             ("CredentialsKeyParameter", "/cognito/encrypt", key_arn),
             ("CredentialsSecretParameter", "/cognito/secret", secret_arn),
+            ("IssuerParameter", "/cognito/issuer", issuer),
         )
     ]
     share = _ram.CfnResourceShare(
@@ -458,11 +459,14 @@ class CognitoIdpStack(Stack):
             self, user_pool.ref, "us-east-1", "Primary"
         )
 
+        self.updated_issuer = (
+            f"https://issuer-cognito-idp.us-east-1.amazonaws.com/{user_pool.ref}"
+        )
         CfnOutput(self, "UserPoolId", value=user_pool.ref)
         CfnOutput(
             self,
             "UpdatedIssuer",
-            value=f"https://issuer-cognito-idp.us-east-1.amazonaws.com/{user_pool.ref}",
+            value=self.updated_issuer,
         )
         CfnOutput(self, "PrimarySecurityLogGroup", value=log_group.log_group_name)
         CfnOutput(self, "SesEmailIdentity", value=EMAIL_IDENTITY_DOMAIN)
@@ -591,6 +595,7 @@ class CognitoCredentialsStack(Stack):
         construct_id: str,
         *,
         user_pool: _cognito.CfnUserPool,
+        updated_issuer: str,
         replica_credentials_key: _kms.IKey,
         **kwargs,
     ) -> None:
@@ -677,7 +682,9 @@ class CognitoCredentialsStack(Stack):
             )
         )
         self.credentials = credentials
-        _share_credentials_parameters(self, credentials.secret_arn, key.key_arn)
+        _share_credentials_parameters(
+            self, credentials.secret_arn, key.key_arn, updated_issuer
+        )
         CfnOutput(self, "CredentialsSecretArn", value=credentials.secret_arn)
         CfnOutput(self, "CredentialsKeyArn", value=key.key_arn)
 
@@ -689,6 +696,7 @@ class CognitoReplicaCredentialsParametersStack(Stack):
         construct_id: str,
         *,
         credentials: _secrets.ISecret,
+        updated_issuer: str,
         replica_credentials_key: _kms.IKey,
         **kwargs,
     ) -> None:
@@ -701,7 +709,7 @@ class CognitoReplicaCredentialsParametersStack(Stack):
             arn_format=ArnFormat.COLON_RESOURCE_NAME,
         )
         _share_credentials_parameters(
-            self, replica_secret_arn, replica_credentials_key.key_arn
+            self, replica_secret_arn, replica_credentials_key.key_arn, updated_issuer
         )
 
 

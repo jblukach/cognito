@@ -149,12 +149,14 @@ class LoggingAndIssuerTest(unittest.TestCase):
         )
         credentials = CognitoCredentialsStack(
             app, "Credentials", user_pool=primary.user_pool,
+            updated_issuer=primary.updated_issuer,
             replica_credentials_key=replica_configuration.credentials_key,
             env=primary_env, cross_region_references=True,
         )
         replica_parameters = CognitoReplicaCredentialsParametersStack(
             app, "ReplicaCredentialsParameters",
             credentials=credentials.credentials,
+            updated_issuer=primary.updated_issuer,
             replica_credentials_key=replica_configuration.credentials_key,
             env=replica_env, cross_region_references=True,
         )
@@ -225,17 +227,24 @@ class LoggingAndIssuerTest(unittest.TestCase):
                 for name, resource in template["Resources"].items()
                 if resource["Type"] == "AWS::SSM::Parameter"
             }
-            self.assertEqual(set(parameters), {"/cognito/encrypt", "/cognito/secret"})
+            self.assertEqual(
+                set(parameters),
+                {"/cognito/encrypt", "/cognito/secret", "/cognito/issuer"},
+            )
             for _, parameter in parameters.values():
                 self.assertEqual(parameter["Tier"], "Advanced")
                 self.assertEqual(parameter["Type"], "String")
+            self.assertEqual(
+                parameters["/cognito/issuer"][1]["Value"],
+                stack.resolve(primary.updated_issuer),
+            )
             share = next(
                 resource for resource in template["Resources"].values()
                 if resource["Type"] == "AWS::RAM::ResourceShare"
             )
             self.assertEqual(share["Properties"]["Principals"], [{"Ref": domains_parameter}])
             self.assertEqual(set(share["DependsOn"]), {item[0] for item in parameters.values()})
-            self.assertEqual(len(share["Properties"]["ResourceArns"]), 2)
+            self.assertEqual(len(share["Properties"]["ResourceArns"]), 3)
             for parameter_id, _ in parameters.values():
                 self.assertIn(json.dumps({"Ref": parameter_id}), json.dumps(share["Properties"]["ResourceArns"]))
             self.assertIn(region, json.dumps(share["Properties"]["ResourceArns"]))
@@ -346,6 +355,22 @@ class LoggingAndIssuerTest(unittest.TestCase):
             "https://issuer-cognito-idp.us-east-1.amazonaws.com/", json.dumps(issuer)
         )
         self.assertNotIn("us-west-2", json.dumps(issuer))
+        self.assertEqual(
+            issuer,
+            replica_configuration.resolve(primary.updated_issuer),
+        )
+        self.assertEqual(
+            Template.from_stack(primary).to_json()["Outputs"]["UpdatedIssuer"]["Value"],
+            {
+                "Fn::Join": [
+                    "",
+                    [
+                        "https://issuer-cognito-idp.us-east-1.amazonaws.com/",
+                        {"Ref": "UserPool"},
+                    ],
+                ]
+            },
+        )
 
 
 class ManagedLoginFailoverTest(unittest.TestCase):
@@ -382,6 +407,7 @@ class ManagedLoginFailoverTest(unittest.TestCase):
         )
         credentials = CognitoCredentialsStack(
             app, "TestCredentials", user_pool=idp.user_pool,
+            updated_issuer=idp.updated_issuer,
             replica_credentials_key=replica_configuration.credentials_key,
             env=primary_env, cross_region_references=True,
         )

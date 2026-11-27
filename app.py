@@ -112,6 +112,7 @@ replica_configuration_stack = CognitoReplicaConfigurationStack(
 
 credentials_stack = CognitoCredentialsStack(app, "CognitoCredentialsStack",
     user_pool = idp_stack.user_pool,
+    updated_issuer = idp_stack.updated_issuer,
     replica_credentials_key = replica_configuration_stack.credentials_key,
     env = cdk.Environment(
         account = account,
@@ -126,6 +127,7 @@ credentials_stack = CognitoCredentialsStack(app, "CognitoCredentialsStack",
 CognitoReplicaCredentialsParametersStack(
     app, "CognitoReplicaCredentialsParametersStack",
     credentials = credentials_stack.credentials,
+    updated_issuer = idp_stack.updated_issuer,
     replica_credentials_key = replica_configuration_stack.credentials_key,
     env = cdk.Environment(
         account = account,
