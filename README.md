@@ -29,6 +29,9 @@ Lambda@Edge integration.
 - Confirmed self-registrations are added to the `DashboardUsers` group. Future
   applications should use their own groups or scopes for authorization rather
   than treating dashboard membership as access to every application.
+  The post-confirmation function can use the user pool's KMS key only through
+  Cognito. After a failed confirmation trigger, check whether the user was
+  confirmed without group membership and repair the membership if needed.
 - The confidential `DashboardEdge` client uses the OAuth authorization-code
   flow, refresh token rotation, and the `openid`, `email`, and `profile`
   scopes. Its callbacks are `/callback` and its sign-out URLs are `/` on both
@@ -75,10 +78,19 @@ CDK does not automatically update this stored secret.
 
 ## Deployment
 
-Commands use the `cog` AWS profile. Install the CDK CLI and the Python
-dependencies in `requirements.txt`, and activate the Python environment before
-running CDK. Bootstrap `us-east-1` and `us-west-2` with the `lukach` qualifier
-if they are not already bootstrapped.
+Commands use the `cog` AWS profile. Install the CDK CLI and set up the local
+Python environment once:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+CDK uses `.venv` automatically; activation is not needed. To diff all stacks,
+run `cdk diff --profile cog`. CDK ignores `--all` for `diff` and prints a
+warning, but still diffs all stacks when none are specified. Bootstrap
+`us-east-1` and `us-west-2` with the `lukach` qualifier if they are not
+already bootstrapped.
 
 ### 1. Deploy and verify email
 

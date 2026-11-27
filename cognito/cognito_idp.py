@@ -316,7 +316,7 @@ class CognitoIdpStack(Stack):
             email_configuration=_cognito.CfnUserPool.EmailConfigurationProperty(
                 email_sending_account="DEVELOPER",
                 configuration_set=ses_configuration_set,
-                from_=f"4n6ir Auth <{EMAIL_FROM_ADDRESS}>",
+                from_=EMAIL_FROM_ADDRESS,
                 reply_to_email_address=EMAIL_REPLY_TO_ADDRESS,
                 source_arn=ses_identity_arn,
             ),
@@ -353,6 +353,41 @@ class CognitoIdpStack(Stack):
         )
         user_pool.apply_removal_policy(RemovalPolicy.RETAIN)
         self.user_pool = user_pool
+
+        confirmation_lambda.add_to_role_policy(
+            _iam.PolicyStatement(
+                actions=[
+                    "kms:Encrypt",
+                    "kms:Decrypt",
+                    "kms:ReEncrypt*",
+                    "kms:GenerateDataKeyWithoutPlainText",
+                ],
+                resources=[encryption_key.attr_arn],
+                conditions={
+                    "StringEquals": {
+                        "kms:ViaService": f"cognito-idp.{self.region}.{Aws.URL_SUFFIX}",
+                    },
+                    "StringLike": {
+                        "kms:EncryptionContext:aws:cognito-idp:userpool-arn": (
+                            Stack.of(self).format_arn(
+                                service="cognito-idp", resource="userpool/*"
+                            )
+                        ),
+                    },
+                },
+            )
+        )
+        confirmation_lambda.add_to_role_policy(
+            _iam.PolicyStatement(
+                actions=["kms:DescribeKey"],
+                resources=[encryption_key.attr_arn],
+                conditions={
+                    "StringEquals": {
+                        "kms:ViaService": f"cognito-idp.{self.region}.{Aws.URL_SUFFIX}",
+                    },
+                },
+            )
+        )
 
         confirmation_lambda.add_permission(
             "AllowCognitoPostConfirmation",
@@ -487,7 +522,7 @@ class CognitoReplicaConfigurationStack(Stack):
                     _cognito.CfnUserPoolRegionalConfigurationAttachment.EmailConfigurationProperty(
                         email_sending_account="DEVELOPER",
                         configuration_set=ses_configuration_set,
-                        from_=f"4n6ir Auth <{EMAIL_FROM_ADDRESS}>",
+                        from_=EMAIL_FROM_ADDRESS,
                         reply_to_email_address=EMAIL_REPLY_TO_ADDRESS,
                         source_arn=ses_identity_arn,
                     )
@@ -710,7 +745,7 @@ class CognitoManagedLoginStack(Stack):
                 "componentClasses": {
                     "buttons": {"borderRadius": 8.0},
                     "focusState": {
-                        "lightMode": {"borderColor": "2e7d32ff"}
+                        "lightMode": {"borderColor": "0972d3ff"}
                     },
                     "link": {
                         "lightMode": {
@@ -748,16 +783,16 @@ class CognitoManagedLoginStack(Stack):
                     "primaryButton": {
                         "lightMode": {
                             "active": {
-                                "backgroundColor": "96cda5ff",
-                                "textColor": "172b1bff",
+                                "backgroundColor": "033160ff",
+                                "textColor": "ffffffff",
                             },
                             "defaults": {
-                                "backgroundColor": "bdefcaff",
-                                "textColor": "172b1bff",
+                                "backgroundColor": "0972d3ff",
+                                "textColor": "ffffffff",
                             },
                             "hover": {
-                                "backgroundColor": "a9deb8ff",
-                                "textColor": "172b1bff",
+                                "backgroundColor": "033160ff",
+                                "textColor": "ffffffff",
                             },
                         }
                     },

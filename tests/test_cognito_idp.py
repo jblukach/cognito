@@ -80,6 +80,44 @@ class CognitoClientTest(unittest.TestCase):
         self.assertIn("{####}", message)
         self.assertIn("Never share", message)
 
+    def test_confirmation_role_can_use_pool_key_through_cognito(self):
+        app = App()
+        stack = CognitoIdpStack(
+            app, "TestIdp",
+            ses_identity_arn="arn:aws:ses:us-east-1:123456789012:identity/auth.4n6ir.com",
+            ses_configuration_set="test-configuration-set",
+            env=Environment(account="123456789012", region="us-east-1"),
+        )
+        resources = Template.from_stack(stack).to_json()["Resources"]
+        role_id = next(
+            name for name, resource in resources.items()
+            if name.startswith("AssignDashboardBirthrightServiceRole")
+            and resource["Type"] == "AWS::IAM::Role"
+        )
+        policy = next(
+            resource["Properties"] for resource in resources.values()
+            if resource["Type"] == "AWS::IAM::Policy"
+            and {"Ref": role_id} in resource["Properties"]["Roles"]
+        )
+        statements = policy["PolicyDocument"]["Statement"]
+        decrypt = next(s for s in statements if "kms:Decrypt" in s["Action"])
+        self.assertEqual(
+            set(decrypt["Action"]),
+            {"kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKeyWithoutPlainText"},
+        )
+        self.assertEqual(decrypt["Resource"], {"Fn::GetAtt": ["UserPoolEncryptionKey", "Arn"]})
+        self.assertEqual(
+            decrypt["Condition"]["StringEquals"]["kms:ViaService"],
+            {"Fn::Join": ["", ["cognito-idp.us-east-1.", {"Ref": "AWS::URLSuffix"}]]},
+        )
+        self.assertEqual(
+            decrypt["Condition"]["StringLike"]["kms:EncryptionContext:aws:cognito-idp:userpool-arn"],
+            {"Fn::Join": ["", ["arn:", {"Ref": "AWS::Partition"}, ":cognito-idp:us-east-1:123456789012:userpool/*"]]},
+        )
+        describe = next(s for s in statements if s["Action"] == "kms:DescribeKey")
+        self.assertEqual(describe["Resource"], decrypt["Resource"])
+        self.assertEqual(describe["Condition"]["StringEquals"], decrypt["Condition"]["StringEquals"])
+
 
 class LoggingAndIssuerTest(unittest.TestCase):
     def test_log_destinations_and_replica_issuer(self):
@@ -229,6 +267,7 @@ class LoggingAndIssuerTest(unittest.TestCase):
         for config in (primary_email, replica_email):
             self.assertEqual(config["ConfigurationSet"], "test-configuration-set")
             self.assertEqual(config["ReplyToEmailAddress"], "hello@4n6ir.com")
+            self.assertEqual(config["From"], "no-reply@auth.4n6ir.com")
 
         issuer = Template.from_stack(replica_configuration).to_json()["Outputs"][
             "ReplicaUpdatedIssuer"
@@ -349,16 +388,21 @@ class ManagedLoginFailoverTest(unittest.TestCase):
             "components"
         ]
         self.assertFalse(components["pageBackground"]["image"]["enabled"])
-        self.assertEqual(
-            components["pageBackground"]["lightMode"]["color"],
-            components["primaryButton"]["lightMode"]["defaults"]["backgroundColor"],
-        )
+        self.assertEqual(components["pageBackground"]["lightMode"]["color"], "bdefcaff")
         self.assertEqual(
             components["pageHeader"]["lightMode"]["background"]["color"], "ffffffff"
         )
         self.assertEqual(
-            components["primaryButton"]["lightMode"]["defaults"],
-            {"backgroundColor": "bdefcaff", "textColor": "172b1bff"},
+            components["primaryButton"]["lightMode"],
+            {
+                "active": {"backgroundColor": "033160ff", "textColor": "ffffffff"},
+                "defaults": {"backgroundColor": "0972d3ff", "textColor": "ffffffff"},
+                "hover": {"backgroundColor": "033160ff", "textColor": "ffffffff"},
+            },
+        )
+        self.assertEqual(
+            branding["Properties"]["Settings"]["componentClasses"]["focusState"]["lightMode"],
+            {"borderColor": "0972d3ff"},
         )
         self.assertEqual(components["form"]["lightMode"]["borderColor"], "bdefcaff")
         for record_type in ("A", "AAAA"):
